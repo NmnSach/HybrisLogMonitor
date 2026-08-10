@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hybris Log Monitor — Servers</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151c; --border: #232733;
+    --text: #d7dbe3; --muted: #8890a0;
+    --error: #ff6b6b; --warning: #f5b942; --live: #52d17c; --accent: #5aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 14px; line-height: 1.5;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 24px 32px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .btn {
+    display: inline-block; padding: 8px 16px; border-radius: 4px;
+    border: 1px solid var(--accent); color: var(--accent); background: transparent;
+    font-family: inherit; font-size: 13px; cursor: pointer; text-decoration: none;
+  }
+  .btn:hover { background: rgba(90,169,255,.1); }
+  .btn.danger { border-color: var(--error); color: var(--error); }
+  .btn.danger:hover { background: rgba(255,107,107,.1); }
+  main { padding: 24px 32px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:hover { background: var(--panel); }
+  tbody td { padding: 12px 10px; vertical-align: middle; }
+  a.server-link { color: var(--text); text-decoration: none; font-weight: 600; }
+  a.server-link:hover { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.live { background: var(--live); }
+  .dot.starting { background: var(--warning); }
+  .dot.error { background: var(--error); }
+  .dot.stopped, .dot.not-started { background: var(--muted); }
+  .status-label { text-transform: capitalize; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  form.inline { display: inline; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Monitored Servers</h1>
+  <a class="btn" href="/new">+ Add server</a>
+</header>
+
+<main>
+  {% if rows|length == 0 %}
+    <div class="empty">
+      No servers added yet.<br><br>
+      <a class="btn" href="/new">Add your first server</a>
+    </div>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Host</th>
+        <th>Log path</th>
+        <th>Status</th>
+        <th style="width:120px;">Error groups</th>
+        <th style="width:160px;">Last polled</th>
+        <th style="width:80px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a class="server-link" href="/analytics/{{ row.server.id }}">{{ row.server.name }}</a></td>
+        <td>{{ row.server.username }}@{{ row.server.host }}:{{ row.server.port }}</td>
+        <td class="sub">{{ row.server.log_path }}</td>
+        <td>
+          <span class="dot {{ row.status|replace(' ', '-') }}"></span>
+          <span class="status-label">{{ row.status }}</span>
+          {% if row.last_error %}<div class="sub" title="{{ row.last_error }}">{{ row.last_error[:60] }}</div>{% endif %}
+        </td>
+        <td>{{ row.error_group_count }}</td>
+        <td class="sub">{{ row.last_polled_at.strftime('%H:%M:%S') if row.last_polled_at else '—' }}</td>
+        <td>
+          <form class="inline" method="POST" action="/servers/{{ row.server.id }}/delete"
+                onsubmit="return confirm('Stop monitoring {{ row.server.name }}?');">
+            <button class="btn danger" type="submit">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</main>
+
+</body>
+</html>

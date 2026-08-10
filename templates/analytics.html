@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ server.name }} — Live Analytics</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151c; --border: #232733;
+    --text: #d7dbe3; --muted: #8890a0;
+    --error: #ff6b6b; --warning: #f5b942; --live: #52d17c; --accent: #5aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 14px; line-height: 1.5;
+  }
+  header { padding: 20px 32px; border-bottom: 1px solid var(--border); }
+  header .top-row { display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  a.back { color: var(--muted); text-decoration: none; font-size: 13px; }
+  a.back:hover { color: var(--accent); }
+  .meta { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.live { background: var(--live); }
+  .dot.starting { background: var(--warning); }
+  .dot.error { background: var(--error); }
+  .dot.stopped, .dot.not-started { background: var(--muted); }
+
+  .controls {
+    display: flex; gap: 12px; align-items: center; padding: 14px 32px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap;
+  }
+  input[type=text], select, textarea {
+    background: #0b0d12; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); font-family: inherit; font-size: 13px; padding: 8px 10px;
+  }
+  #search-input { flex: 1; min-width: 200px; }
+  .issue-context {
+    padding: 10px 32px; border-bottom: 1px solid var(--border);
+  }
+  .issue-context textarea { width: 100%; resize: vertical; min-height: 40px; }
+  .issue-context label { display:block; font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+
+  main { padding: 24px 32px; }
+  h2.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 28px 0 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+  }
+  tbody tr.row { border-bottom: 1px solid var(--border); cursor: pointer; }
+  tbody tr.row:hover { background: var(--panel); }
+  tbody td { padding: 10px; vertical-align: top; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .badge.error { background: rgba(255,107,107,.15); color: var(--error); }
+  .badge.warning { background: rgba(245,185,66,.15); color: var(--warning); }
+  .count-pill { display: inline-block; min-width: 26px; text-align: center; padding: 2px 6px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-weight: 600; }
+  .exception { color: var(--accent); font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .toggle-icon { color: var(--muted); font-size: 11px; }
+  tr.detail-row { display: none; background: #0e1016; }
+  tr.detail-row.open { display: table-row; }
+  tr.detail-row td { padding: 16px; border-bottom: 1px solid var(--border); }
+  .detail-frame { font-size: 12.5px; color: var(--muted); background: var(--panel); padding: 10px 12px; border-radius: 4px; margin-bottom: 12px; word-break: break-all; }
+  .btn { display: inline-block; padding: 6px 14px; border-radius: 4px; border: 1px solid var(--accent); color: var(--accent); background: transparent; font-family: inherit; font-size: 12.5px; cursor: pointer; text-decoration: none; }
+  .btn:hover { background: rgba(90,169,255,.1); }
+  .btn.ghost { border-color: var(--border); color: var(--muted); }
+  .suggestion-box { margin-top: 12px; white-space: pre-wrap; }
+  .spinner { color: var(--muted); font-size: 12.5px; }
+  .empty-state { color: var(--muted); padding: 24px 0; text-align: center; font-size: 13px; }
+
+  .historical-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .historical-banner { color: var(--warning); font-size: 12px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top-row">
+    <h1>{{ server.name }}</h1>
+    <a class="back" href="/servers">&larr; All servers</a>
+  </div>
+  <div class="meta">
+    <span id="status-dot" class="dot not-started"></span>
+    <span id="status-label">not started</span>
+    &nbsp;•&nbsp; {{ server.username }}@{{ server.host }}:{{ server.port }}
+    &nbsp;•&nbsp; tailing <span class="muted">{{ server.log_path }}</span>
+    &nbsp;•&nbsp; last polled <span id="last-polled">—</span>
+    &nbsp;•&nbsp; <span id="total-seen">0</span> entries parsed
+  </div>
+</header>
+
+<div class="issue-context">
+  <label>Optional context for AI suggestions (what incident are you investigating?)</label>
+  <textarea id="issue-description" placeholder="e.g. checkout failures reported since 14:00 today"></textarea>
+</div>
+
+<div class="controls">
+  <input type="text" id="search-input" placeholder="Search message, exception class, or stack frame…">
+  <select id="severity-filter">
+    <option value="all">All severities</option>
+    <option value="error">Errors only</option>
+    <option value="warning">Warnings only</option>
+  </select>
+  <select id="sort-select">
+    <option value="recent">Most recent first</option>
+    <option value="count">Most frequent first</option>
+  </select>
+</div>
+
+<main>
+  <h2 class="section-title">Live errors &amp; warnings</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:70px;">Severity</th>
+        <th>Exception</th>
+        <th>Message</th>
+        <th style="width:70px;">Count</th>
+        <th style="width:150px;">First seen</th>
+        <th style="width:150px;">Last seen</th>
+        <th style="width:24px;"></th>
+      </tr>
+    </thead>
+    <tbody id="live-tbody"></tbody>
+  </table>
+  <div class="empty-state" id="live-empty" style="display:none;">No errors or warnings match the current filter.</div>
+
+  <h2 class="section-title">Historical files (static snapshot, not live)</h2>
+  <div class="historical-controls">
+    <select id="history-file-select"><option value="">Browse files…</option></select>
+    <button class="btn ghost" id="refresh-files-btn" type="button">Refresh file list</button>
+    <button class="btn" id="load-history-btn" type="button">Load</button>
+  </div>
+  <div class="historical-banner" id="history-banner" style="display:none;"></div>
+  <table id="history-table" style="display:none;">
+    <thead>
+      <tr>
+        <th style="width:70px;">Severity</th>
+        <th>Exception</th>
+        <th>Message</th>
+        <th style="width:70px;">Count</th>
+        <th style="width:150px;">First seen</th>
+        <th style="width:150px;">Last seen</th>
+        <th style="width:24px;"></th>
+      </tr>
+    </thead>
+    <tbody id="history-tbody"></tbody>
+  </table>
+</main>
+
+<script>
+const SERVER_ID = "{{ server.id }}";
+const REFRESH_MS = 6000;
+
+// Per-row UI state that must survive auto-refresh re-renders: whether a
+// row is expanded, and whether we've already rendered a suggestion for
+// it (server also caches, this just avoids a redundant fetch+flicker).
+const rowUiState = new Map(); // gid -> { open: bool, loaded: bool }
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s == null ? "" : s;
+  return div.innerHTML;
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleTimeString();
+}
+
+function renderRows(tbody, rows, prefix) {
+  tbody.innerHTML = "";
+  for (const row of rows) {
+    const gid = row.gid;
+    const key = prefix + gid;
+    if (!rowUiState.has(key)) rowUiState.set(key, { open: false, loaded: false });
+    const ui = rowUiState.get(key);
+
+    const tr = document.createElement("tr");
+    tr.className = "row";
+    tr.onclick = () => toggleRow(key);
+    tr.innerHTML = `
+      <td><span class="badge ${row.severity}">${row.severity}</span></td>
+      <td class="exception">${escapeHtml(row.exception_class || "—")}</td>
+      <td class="message">${escapeHtml((row.message || "").slice(0, 140))}${(row.message || "").length > 140 ? "…" : ""}</td>
+      <td><span class="count-pill">${row.count}</span></td>
+      <td class="muted">${fmtTime(row.first_seen)}</td>
+      <td class="muted">${fmtTime(row.last_seen)}</td>
+      <td class="toggle-icon" id="icon-${key}">${ui.open ? "▾" : "▸"}</td>
+    `;
+    tbody.appendChild(tr);
+
+    const detailTr = document.createElement("tr");
+    detailTr.className = "detail-row" + (ui.open ? " open" : "");
+    detailTr.id = "detail-" + key;
+    detailTr.innerHTML = `
+      <td colspan="7">
+        ${row.top_frame ? `<div class="detail-frame">at ${escapeHtml(row.top_frame)}</div>` : ""}
+        <button class="btn" id="btn-${key}" onclick="event.stopPropagation(); getSuggestion('${key}', '${gid}')" ${ui.loaded ? 'style="display:none;"' : ""}>
+          Get AI suggestion
+        </button>
+        <div class="suggestion-box" id="suggestion-${key}"></div>
+      </td>
+    `;
+    tbody.appendChild(detailTr);
+
+    if (ui.open && ui.loaded) {
+      // Re-open already happened via class above; suggestion content
+      // itself was cleared by the innerHTML rebuild, so re-fetch (server
+      // cache makes this instant / free of a new LLM call).
+      getSuggestion(key, gid, /*silent=*/true);
+    }
+  }
+}
+
+function toggleRow(key) {
+  const ui = rowUiState.get(key) || { open: false, loaded: false };
+  ui.open = !ui.open;
+  rowUiState.set(key, ui);
+  const detail = document.getElementById("detail-" + key);
+  const icon = document.getElementById("icon-" + key);
+  if (detail) detail.classList.toggle("open", ui.open);
+  if (icon) icon.textContent = ui.open ? "▾" : "▸";
+}
+
+async function getSuggestion(key, gid, silent) {
+  const box = document.getElementById("suggestion-" + key);
+  const btn = document.getElementById("btn-" + key);
+  if (!box) return;
+
+  const ui = rowUiState.get(key);
+  if (!silent) {
+    btn.disabled = true;
+    box.innerHTML = '<div class="spinner">Requesting AI suggestion…</div>';
+  }
+
+  const issueDescription = encodeURIComponent(document.getElementById("issue-description").value);
+
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/suggest/${gid}?issue_description=${issueDescription}`);
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      box.innerHTML = `<div class="spinner">Error: ${escapeHtml(data.error || "request failed")}</div>`;
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    let html = "";
+    if (data.root_cause) html += `<strong>Root cause:</strong> ${escapeHtml(data.root_cause)}<br><br>`;
+    if (data.fix) html += `<strong>Suggested fix:</strong> ${escapeHtml(data.fix)}`;
+    if (!data.root_cause && !data.fix && data.suggestion) html = escapeHtml(data.suggestion);
+
+    box.innerHTML = html || "<em>No suggestion returned.</em>";
+    if (btn) btn.style.display = "none";
+    ui.loaded = true;
+    rowUiState.set(key, ui);
+  } catch (err) {
+    box.innerHTML = `<div class="spinner">Request failed: ${escapeHtml(String(err))}</div>`;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/status`);
+    const data = await resp.json();
+    const dot = document.getElementById("status-dot");
+    const label = document.getElementById("status-label");
+    dot.className = "dot " + (data.status || "not started").replace(" ", "-");
+    label.textContent = data.status || "not started";
+    document.getElementById("last-polled").textContent = data.last_polled_at ? fmtTime(data.last_polled_at) : "—";
+    document.getElementById("total-seen").textContent = data.total_entries_seen || 0;
+  } catch (e) { /* transient network hiccup, ignore */ }
+}
+
+async function refreshLiveErrors() {
+  const q = encodeURIComponent(document.getElementById("search-input").value);
+  const severity = document.getElementById("severity-filter").value;
+  const sort = document.getElementById("sort-select").value;
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/errors?q=${q}&severity=${severity}&sort=${sort}`);
+    const data = await resp.json();
+    const tbody = document.getElementById("live-tbody");
+    renderRows(tbody, data.rows, "live-");
+    document.getElementById("live-empty").style.display = data.rows.length === 0 ? "block" : "none";
+  } catch (e) { /* transient network hiccup, ignore */ }
+}
+
+async function loadFileList() {
+  const sel = document.getElementById("history-file-select");
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/files`);
+    const data = await resp.json();
+    if (!resp.ok) {
+      sel.innerHTML = `<option value="">Error: ${escapeHtml(data.error || "failed")}</option>`;
+      return;
+    }
+    sel.innerHTML = '<option value="">Select a file…</option>' + data.files.map(f =>
+      `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}${f.is_live ? " (live)" : ""} — ${(f.size/1024).toFixed(1)} KB</option>`
+    ).join("");
+  } catch (e) {
+    sel.innerHTML = '<option value="">Failed to load file list</option>';
+  }
+}
+
+async function loadHistory() {
+  const filename = document.getElementById("history-file-select").value;
+  const banner = document.getElementById("history-banner");
+  const table = document.getElementById("history-table");
+  if (!filename) {
+    banner.style.display = "block";
+    banner.textContent = "Pick a file first.";
+    return;
+  }
+  banner.style.display = "block";
+  banner.textContent = `Parsing ${filename}… this is a one-off full parse, not live.`;
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/history?file=${encodeURIComponent(filename)}`);
+    const data = await resp.json();
+    if (!resp.ok) {
+      banner.textContent = `Error: ${data.error || "failed to parse file"}`;
+      return;
+    }
+    banner.textContent = `${filename}: ${data.total_entries} entries parsed, ${data.error_count} errors, ${data.warning_count} warnings, ${data.rows.length} distinct groups. Static snapshot — reload to refresh.`;
+    table.style.display = data.rows.length ? "table" : "none";
+    renderRows(document.getElementById("history-tbody"), data.rows, "hist-");
+  } catch (e) {
+    banner.textContent = "Request failed.";
+  }
+}
+
+document.getElementById("search-input").addEventListener("input", debounce(refreshLiveErrors, 300));
+document.getElementById("severity-filter").addEventListener("change", refreshLiveErrors);
+document.getElementById("sort-select").addEventListener("change", refreshLiveErrors);
+document.getElementById("refresh-files-btn").addEventListener("click", loadFileList);
+document.getElementById("load-history-btn").addEventListener("click", loadHistory);
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+refreshStatus();
+refreshLiveErrors();
+loadFileList();
+setInterval(refreshStatus, REFRESH_MS);
+setInterval(refreshLiveErrors, REFRESH_MS);
+</script>
+
+</body>
+</html>
