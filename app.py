@@ -6,14 +6,16 @@ Register an SFTP-accessible server and its actively-written log file.
 The app parses whatever's already in that file on startup, then keeps
 polling for new lines at a fixed interval for as long as the process
 runs. Only error/warning entries are ever surfaced — plain info/debug
-noise is parsed (needed to find entry boundaries) but discarded. The
-/analytics page lists them in a searchable/filterable, auto-refreshing
-table; clicking a row triggers a single on-demand Claude API call for a
-root-cause suggestion, cached so repeat views don't re-bill.
+noise is parsed (needed to find entry boundaries) but discarded.
 
-Historical (already-rotated) log files in the same directory can be
-browsed and parsed once, in full — no polling, since a file nothing is
-appending to will never have anything new to pick up.
+The /analytics page is the live dashboard: errors on the left, details +
+AI analysis on the right, auto-refreshing. For date-rotated logs
+(console-YYYYMMDD.log) the live poller automatically jumps to the next
+day's file once the day ends.
+
+Legacy (already-rotated) log files are studied separately on
+/legacy/<id> — pick a file, parse it once in full (a static snapshot,
+no polling), with the same left/right + AI analysis UI.
 
 Run:
     pip install -r requirements.txt
@@ -117,7 +119,7 @@ def new_server():
         password=password, log_path=log_path, auth_method=auth_method, key_path=key_path,
     )
     poller.start_poller(server)
-    return redirect(url_for("analytics_page", server_id=server.id))
+    return redirect(url_for("server_added_page", server_id=server.id))
 
 
 @app.route("/analytics/<server_id>")
@@ -126,6 +128,41 @@ def analytics_page(server_id):
     if server is None:
         return "Server not found.", 404
     return render_template("analytics.html", server=server)
+
+
+@app.route("/server_added/<server_id>")
+def server_added_page(server_id):
+    """Landing page right after a new server is added. Lets the user choose
+    between jumping straight into the live monitor, or studying the node's
+    previous (date-rotated) log files separately."""
+    server = store.get(server_id)
+    if server is None:
+        return "Server not found.", 404
+    return render_template("server_added.html", server=server)
+
+
+@app.route("/legacy/<server_id>")
+def legacy_page(server_id):
+    """Separate page for studying previously-rotated / dated log files. This
+    is deliberately independent from the live analytics page — pick a file,
+    parse it once in full (a static snapshot), and drill into the errors
+    with the same left/right + AI analysis UI."""
+    server = store.get(server_id)
+    if server is None:
+        return "Server not found.", 404
+    log_dir = os.path.dirname(server.log_path) or "."
+    files = []
+    try:
+        files = sftp_client.list_log_dir(server, log_dir)
+    except Exception:  # noqa: BLE001 — show an empty picker on the page
+        files = []
+    current_name = os.path.basename(server.log_path)
+    return render_template(
+        "legacy.html",
+        server=server,
+        log_dir=log_dir,
+        files=[{"name": n, "size": sz, "is_live": n == current_name} for n, sz in files],
+    )
 
 
 @app.route("/servers/<server_id>/delete", methods=["POST"])
@@ -141,6 +178,7 @@ def delete_server(server_id):
 
 @app.route("/api/servers/<server_id>/status")
 def api_status(server_id):
+    server = store.get(server_id)
     state = poller.get_state(server_id)
     if state is None:
         return jsonify({"status": "not started"})
@@ -150,6 +188,7 @@ def api_status(server_id):
         "last_polled_at": state.last_polled_at.isoformat() if state.last_polled_at else None,
         "total_entries_seen": state.total_entries_seen,
         "group_count": len(state.groups),
+        "current_path": state.current_path or (server.log_path if server else ""),
     })
 
 
@@ -162,7 +201,41 @@ def api_errors(server_id):
     return jsonify({"rows": [_group_row(g) for g in groups]})
 
 
+def _relevance(severity: str, count: int, last_seen=None) -> dict:
+    """A simple 0-100 heuristic for how 'relevant' an error group is to an
+    investigator, combining severity, raw frequency, and (for live data)
+    how recently it last fired. Returns {'score': int, 'label': str}."""
+    now = datetime.utcnow()
+    if isinstance(last_seen, str):
+        try:
+            last_seen = datetime.fromisoformat(last_seen)
+        except ValueError:
+            last_seen = None
+
+    score = {"error": 40, "warning": 20}.get(severity, 0)
+    if count >= 100:
+        score += 40
+    elif count >= 20:
+        score += 30
+    elif count >= 5:
+        score += 20
+    elif count >= 2:
+        score += 10
+    if last_seen is not None:
+        age_min = (now - last_seen).total_seconds() / 60.0
+        if age_min < 10:
+            score += 20
+        elif age_min < 60:
+            score += 15
+        elif age_min < 360:
+            score += 8
+    score = max(0, min(score, 100))
+    label = "High" if score >= 70 else ("Medium" if score >= 40 else "Low")
+    return {"score": score, "label": label}
+
+
 def _group_row(g) -> dict:
+    last_seen = g.last_seen if isinstance(g.last_seen, datetime) else None
     return {
         "gid": g.gid,
         "severity": g.severity,
@@ -170,8 +243,10 @@ def _group_row(g) -> dict:
         "message": g.message,
         "count": g.count,
         "first_seen": g.first_seen.isoformat() if g.first_seen else None,
-        "last_seen": g.last_seen.isoformat() if g.last_seen else None,
+        "last_seen": last_seen.isoformat() if last_seen else None,
         "top_frame": g.top_frame,
+        "sample_raw_text": getattr(g, "sample_raw_text", None),
+        "relevance": _relevance(g.severity, g.count, last_seen),
     }
 
 
@@ -300,6 +375,8 @@ def api_history(server_id):
                 "first_seen": g.first_seen.isoformat() if g.first_seen else None,
                 "last_seen": g.last_seen.isoformat() if g.last_seen else None,
                 "top_frame": g.sample_entry.top_frame,
+                "sample_raw_text": g.sample_entry.raw_text,
+                "relevance": _relevance(g.severity, g.count, g.last_seen),
             }
             for g in result.groups
         ],

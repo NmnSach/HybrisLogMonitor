@@ -116,6 +116,18 @@ def list_log_dir(server, dir_path: str) -> List[Tuple[str, int]]:
     return sorted(files)
 
 
+def file_exists(server, remote_path: str) -> bool:
+    """Return True if the remote file exists (False on FileNotFoundError).
+    Used by the poller to decide whether a date-rotated next-day file is
+    available before switching to it."""
+    with _sftp_session(server) as sftp:
+        try:
+            sftp.stat(remote_path)
+            return True
+        except FileNotFoundError:
+            return False
+
+
 def test_connection(server) -> Tuple[bool, str]:
     """Used by /new to validate credentials + log_path before saving the
     server record and starting a poller for it."""

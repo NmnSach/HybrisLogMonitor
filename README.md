@@ -4,9 +4,15 @@ Live SFTP-based log monitoring for Hybris server nodes. Register a
 server, and the app parses whatever's already in its active log file,
 then keeps polling for new lines for as long as the process runs.
 Only error/warning entries are ever surfaced — plain info/debug noise
-is parsed (needed to find entry boundaries) but discarded. Already
--rotated log files can be browsed and parsed once, in full, with no
-polling.
+is parsed (needed to find entry boundaries) but discarded.
+
+The **live monitor** and **legacy file study** are two separate views:
+- `/analytics/<id>` is the live dashboard and only ever watches the
+  actively-written log file. For date-rotated logs
+  (`console-YYYYMMDD.log`) it **automatically jumps to the next day's
+  file** when the current day ends.
+- `/legacy/<id>` is where you browse and parse earlier, already-rotated
+  logs (e.g. yesterday's file) once, in full, as a static snapshot.
 
 ## Setup
 
@@ -33,19 +39,24 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
    count. "+ Add server" goes to `/new`.
 2. **`/new`** — enter host/port/username, either a password or an SSH
    private key path, and the path to the *actively-written* log file
-   (e.g. `wrapper.log` or `console.log` — whichever one your node is
-   currently appending to). The connection and file are checked before
-   saving. On success you're redirected straight to `/analytics/<id>`.
-3. **`/analytics/<id>`** — the live dashboard:
+   (e.g. `console-20260810.log` — whichever file your node is currently
+   appending to). The connection and file are checked before saving.
+   On success you land on a **"server added"** page that offers two
+   options: **Open live monitor** or **Check previous log files**.
+3. **`/analytics/<id>`** — the live dashboard (Slack-styled two-pane UI):
+   - Errors are listed on the **left** with their severity, frequency
+     (count) and a relevance label (High / Medium / Low, combining
+     severity + frequency + how recently the error fired).
+   - Click an error to see its full details, stack-trace snippet and an
+     **"Analyze with AI"** button on the **right**; the AI analysis
+     renders *under* those details on the right pane.
    - Auto-refreshes every 6 seconds.
-   - Search box + severity filter + sort (most recent / most frequent).
-   - Click a row to expand it; "Get AI suggestion" fires exactly one
-     Claude API call for that error group, cached server-side so
-     re-opening the row (or another user hitting the same report) never
-     re-bills it.
-   - "Historical files" section browses other files in the same remote
-     directory (e.g. yesterday's rotated log) and parses one, in full,
-     on demand — a static snapshot, not live.
+   - For date-rotated files (`console-20260810.log`), the monitor
+     **auto-advances to the next day's file** (`console-20260811.log`)
+     once the day is over.
+4. **`/legacy/<id>`** — separate legacy-file study page: browse the
+   node's log directory, pick an earlier file, and parse it in full as a
+   static snapshot with the same left/right + AI analysis UI. No polling.
 
 ## Project layout
 
@@ -56,7 +67,8 @@ sftp_client.py     paramiko wrappers (short-lived connections per call)
 models.py         Server model + JSON-file persistence
 log_parser.py      Batch + incremental log parsing (see below)
 llm_suggest.py     Calls out to Claude for a root-cause/fix suggestion
-templates/         servers.html, new_server.html, analytics.html
+templates/         servers.html, new_server.html, server_added.html,
+                   analytics.html, legacy.html
 ```
 
 ## How live tailing works
@@ -74,6 +86,14 @@ by a fingerprint (exception type + root cause + top stack frame, with
 IDs/numbers normalized out) so a recurring error's count just increments
 in place rather than the in-memory list growing without bound over a
 long monitoring session.
+
+**Date-rotated files.** If the monitored log path follows the
+`console-YYYYMMDD.log` naming convention, the live monitor checks each
+poll cycle whether the current day is over and the next day's dated file
+has appeared on the server; when both are true it automatically closes
+out the old file and starts tailing the new one (e.g. `console-20260810.log`
+→ `console-20260811.log` at midnight). Non-dated files (plain `console.log`)
+keep the existing behaviour unchanged.
 
 **A structural nuance worth knowing:** the parser deliberately does not
 finalize the *most recent* entry in the file until a following line

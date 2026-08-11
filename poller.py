@@ -27,6 +27,8 @@ no longer being written to will never have anything new to pick up.
 """
 
 import hashlib
+import os
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,6 +39,30 @@ import sftp_client
 
 POLL_INTERVAL_SECONDS = 15
 MAX_GROUPS_PER_SERVER = 2000  # safety cap for pathologically noisy logs
+
+# Matches date-rotated log files following the console-YYYYMMDD.log
+# convention (e.g. console-20260810.log). Used so the live monitor can
+# automatically jump to the next day's file once the current day is over.
+_DATED_FILE_RE = re.compile(r"^(?P<prefix>.*?)(?P<date>\d{8})(?P<suffix>\.log)$")
+
+
+def dated_file_path(server, when: datetime) -> Optional[str]:
+    """If `server.log_path` follows the console-YYYYMMDD.log convention,
+    return the path for the given date `when` (e.g. console-20260811.log
+    for Aug 11 2026). Returns None for any non-date-rotated file so the
+    poller never tries to switch files for e.g. a plain console.log."""
+    base = os.path.basename(server.log_path)
+    m = _DATED_FILE_RE.match(base)
+    if not m:
+        return None
+    try:
+        datetime.strptime(m.group("date"), "%Y%m%d")
+    except ValueError:
+        return None
+    prefix, suffix = m.group("prefix"), m.group("suffix")
+    return os.path.join(
+        os.path.dirname(server.log_path), f"{prefix}{when.strftime('%Y%m%d')}{suffix}"
+    )
 
 
 @dataclass
@@ -57,6 +83,7 @@ class LiveErrorGroup:
 class ServerPollState:
     server_id: str
     offset: int = 0
+    current_path: str = ""  # the remote file currently being tailed
     parser: Optional["log_parser.IncrementalParser"] = None
     groups: Dict[str, LiveErrorGroup] = field(default_factory=dict)  # gid -> group
     # Populated on demand by /api/servers/<id>/history in app.py, so a
@@ -116,10 +143,14 @@ def _record_entry(state: ServerPollState, entry) -> None:
                     existing.last_seen = entry.timestamp
 
 
-def _initial_parse(server, state: ServerPollState) -> None:
-    """Parse whatever's already in the file when we start watching it."""
+def _initial_parse(server, state: ServerPollState, path: Optional[str] = None) -> None:
+    """Parse whatever's already in the file when we start watching it. The
+    remote path defaults to the file the state currently tracks, so this
+    can also seed a freshly rotated-to dated file."""
+    path = path or state.current_path or server.log_path
+    state.current_path = path
     parser = None
-    for chunk in sftp_client.iter_full_text_chunks(server, server.log_path):
+    for chunk in sftp_client.iter_full_text_chunks(server, path):
         if parser is None:
             pattern = log_parser.sniff_pattern_from_text(chunk)
             parser = log_parser.IncrementalParser(pattern)
@@ -128,7 +159,34 @@ def _initial_parse(server, state: ServerPollState) -> None:
             _record_entry(state, entry)
 
     state.parser = parser  # stays None if the file was empty
-    state.offset = sftp_client.stat_size(server, server.log_path)
+    state.offset = sftp_client.stat_size(server, path)
+
+
+def _maybe_switch_dated(server, state: ServerPollState) -> None:
+    """For date-rotated logs (console-YYYYMMDD.log), once the day in the
+    file we're tailing has ended, automatically jump to the *next* day's
+    file and start studying it. This is what lets the live monitor roll
+    from console-20260810.log to console-20260811.log at midnight.
+
+    If the log isn't date-rotated, or the next day's file doesn't exist
+    remotely yet, this is a no-op and tailing continues on the current
+    file."""
+    today_path = dated_file_path(server, datetime.utcnow())
+    if today_path is None or today_path == state.current_path:
+        return
+    # Only switch once the target file actually exists on the server.
+    if not sftp_client.file_exists(server, today_path):
+        return
+    # Close out whatever entry was still open in the old day's file.
+    if state.parser is not None:
+        pending = state.parser.flush()
+        if pending is not None:
+            state.total_entries_seen += 1
+            _record_entry(state, pending)
+    # Reset and seed the new day's file.
+    state.parser = None
+    state.offset = 0
+    _initial_parse(server, state, path=today_path)
 
 
 STALL_POLLS_BEFORE_FLUSH = 2  # ~2 poll intervals of silence before we
@@ -137,14 +195,15 @@ STALL_POLLS_BEFORE_FLUSH = 2  # ~2 poll intervals of silence before we
 
 
 def _poll_once(server, state: ServerPollState) -> None:
+    path = state.current_path or server.log_path
     if state.parser is None:
         # File was empty when we started (or still is) — check whether
         # there's content yet, and if so, detect the format now.
-        size = sftp_client.stat_size(server, server.log_path)
+        size = sftp_client.stat_size(server, path)
         if size == 0:
             state.last_polled_at = datetime.utcnow()
             return
-        data, new_size = sftp_client.read_range(server, server.log_path, 0)
+        data, new_size = sftp_client.read_range(server, path, 0)
         text = data.decode("utf-8", errors="replace")
         pattern = log_parser.sniff_pattern_from_text(text)
         state.parser = log_parser.IncrementalParser(pattern)
@@ -155,7 +214,7 @@ def _poll_once(server, state: ServerPollState) -> None:
         state.last_polled_at = datetime.utcnow()
         return
 
-    new_size = sftp_client.stat_size(server, server.log_path)
+    new_size = sftp_client.stat_size(server, path)
 
     if new_size < state.offset:
         # File was rotated/truncated (rollover to a new file, or a
@@ -171,7 +230,7 @@ def _poll_once(server, state: ServerPollState) -> None:
             _record_entry(state, leftover_entry)
         state.offset = 0
         state.stall_polls = 0
-        data, new_size = sftp_client.read_range(server, server.log_path, 0)
+        data, new_size = sftp_client.read_range(server, path, 0)
     elif new_size == state.offset:
         # Nothing new written since last poll. If there's an entry still
         # sitting "open" (waiting for a following line to prove it's
@@ -191,7 +250,7 @@ def _poll_once(server, state: ServerPollState) -> None:
         return
     else:
         state.stall_polls = 0
-        data, new_size = sftp_client.read_range(server, server.log_path, state.offset)
+        data, new_size = sftp_client.read_range(server, path, state.offset)
 
     text = data.decode("utf-8", errors="replace")
     for entry in state.parser.feed(text):
@@ -215,6 +274,7 @@ def _poll_loop(server, state: ServerPollState) -> None:
         if state.stop_event.wait(POLL_INTERVAL_SECONDS):
             break
         try:
+            _maybe_switch_dated(server, state)
             _poll_once(server, state)
             if state.status == "error":
                 state.status = "live"
@@ -231,7 +291,7 @@ def start_poller(server) -> ServerPollState:
         existing = _STATES.get(server.id)
         if existing is not None and existing.thread and existing.thread.is_alive():
             return existing
-        state = ServerPollState(server_id=server.id)
+        state = ServerPollState(server_id=server.id, current_path=server.log_path)
         _STATES[server.id] = state
 
     thread = threading.Thread(target=_poll_loop, args=(server, state), daemon=True)

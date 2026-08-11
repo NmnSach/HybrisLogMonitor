@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ server.name }} — Added</title>
+<style>
+  :root {
+    --aubergine: #4a154b; --aubergine-2: #611f69;
+    --green: #2bac76; --red: #e01e5a; --yellow: #ecb22e;
+    --bg: #ffffff; --border: #e3e3e3; --text: #1d1c1d; --muted: #616061;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+                 Arial, "Noto Sans", sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--aubergine); color: #fff; padding: 16px 32px;
+  }
+  header h1 { margin: 0; font-size: 17px; font-weight: 700; }
+  a.back { color: rgba(255,255,255,.82); text-decoration: none; font-size: 13px; }
+  a.back:hover { color: #fff; }
+  main { max-width: 720px; margin: 40px auto; padding: 0 24px; }
+  .success { display: flex; align-items: center; gap: 10px; color: var(--green); font-weight: 700; font-size: 16px; margin-bottom: 8px; }
+  .subtitle { color: var(--muted); margin-bottom: 28px; }
+  .server-box { background: #fafafa; border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 28px; font-size: 13px; color: var(--muted); }
+  .server-box b { color: var(--text); font-weight: 600; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card {
+    flex: 1 1 300px; border: 1px solid var(--border); border-radius: 10px;
+    padding: 22px; text-decoration: none; color: inherit; transition: border-color .1s ease, box-shadow .1s ease;
+  }
+  .card:hover { border-color: var(--aubergine); box-shadow: 0 2px 8px rgba(74,21,75,.08); }
+  .card .icon { font-size: 26px; }
+  .card h2 { margin: 10px 0 6px; font-size: 15px; color: var(--aubergine); }
+  .card p { margin: 0; color: var(--muted); font-size: 13px; }
+  .card .tag { display: inline-block; margin-top: 12px; font-size: 12px; font-weight: 700; color: #fff; background: var(--aubergine); padding: 5px 12px; border-radius: 6px; }
+  .card.legacy .tag { background: var(--aubergine-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⬢ {{ server.name }} added</h1>
+  <a class="back" href="/servers">&larr; All servers</a>
+</header>
+
+<main>
+  <div class="success">✔ Server connected and monitoring started</div>
+  <div class="subtitle">Choose what you want to do next. Live monitoring and legacy file study are separate views.</div>
+
+  <div class="server-box">
+    <b>{{ server.name }}</b> — {{ server.username }}@{{ server.host }}:{{ server.port }}
+    <br>Live log: <b>{{ server.log_path }}</b>
+  </div>
+
+  <div class="cards">
+    <a class="card" href="/analytics/{{ server.id }}">
+      <div class="icon">📡</div>
+      <h2>Open live monitor</h2>
+      <p>Watch {{ server.name }} in real time. The monitor auto-advances to the next dated log file (e.g. console-YYYYMMDD.log) when the day ends.</p>
+      <span class="tag">Go to live monitor →</span>
+    </a>
+    <a class="card legacy" href="/legacy/{{ server.id }}">
+      <div class="icon">🗂️</div>
+      <h2>Check previous log files</h2>
+      <p>Browse the node's earlier, already-rotated logs (yesterday's file, the week before, etc.) and parse one in full as a static snapshot.</p>
+      <span class="tag">Browse legacy files →</span>
+    </a>
+  </div>
+</main>
+
+</body>
+</html>

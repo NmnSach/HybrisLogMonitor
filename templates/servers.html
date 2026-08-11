@@ -49,6 +49,8 @@
   .status-label { text-transform: capitalize; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   form.inline { display: inline; }
+  a.legacy-link { color: var(--muted); font-size: 12px; text-decoration: none; margin-right: 10px; }
+  a.legacy-link:hover { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -91,6 +93,7 @@
         <td>{{ row.error_group_count }}</td>
         <td class="sub">{{ row.last_polled_at.strftime('%H:%M:%S') if row.last_polled_at else '—' }}</td>
         <td>
+          <a class="legacy-link" href="/legacy/{{ row.server.id }}">Legacy files</a>
           <form class="inline" method="POST" action="/servers/{{ row.server.id }}/delete"
                 onsubmit="return confirm('Stop monitoring {{ row.server.name }}?');">
             <button class="btn danger" type="submit">Remove</button>
