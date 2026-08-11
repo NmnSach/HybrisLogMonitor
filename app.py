@@ -36,11 +36,35 @@ import log_parser
 import poller
 import sftp_client
 from llm_suggest import suggest_fix
+from markupsafe import escape as _esc
 from models import Server, ServerStore
 
 app = Flask(__name__)
 
 store = ServerStore()
+
+
+def _nav(active: str = "", legacy_url: str = "", subline=None) -> dict:
+    """Context for the shared Slack-style top navbar (_nav.html)."""
+    return {"active": active, "legacy_url": legacy_url, "subline": subline}
+
+
+def _live_nav(server, active: str = "live", include_status: bool = False, extra: str = "") -> dict:
+    """Nav context for server pages, with a subline anchoring the server,
+    and (on the live page) the live-status widgets the page JS updates."""
+    parts = [
+        f"<span><b>{_esc(server.name)}</b></span>",
+        f"<span>{_esc(server.username)}@{_esc(server.host)}:{server.port}</span>",
+    ]
+    if include_status:
+        parts += [
+            '<span><span id="status-dot" class="dot not-started"></span><span id="status-label">not started</span></span>',
+            f'<span>tailing <b id="current-file">{_esc(server.log_path)}</b></span>',
+            '<span>last polled <b id="last-polled">—</b></span>',
+            '<span><b id="total-seen">0</b> entries</span>',
+        ]
+    subline = "".join(parts) + extra
+    return _nav(active=active, legacy_url=f"/legacy/{server.id}", subline=subline)
 
 
 # ---------------------------------------------------------------------
@@ -65,13 +89,19 @@ def servers_page():
             "error_group_count": len(state.groups) if state else 0,
             "total_entries_seen": state.total_entries_seen if state else 0,
         })
-    return render_template("servers.html", rows=rows)
+    total = len(store.list())
+    nav = _nav(
+        active="servers",
+        legacy_url="/legacy",
+        subline=f"<span><b>{total}</b> server{'s' if total != 1 else ''} registered</span>",
+    )
+    return render_template("servers.html", rows=rows, nav=nav)
 
 
 @app.route("/new", methods=["GET", "POST"])
 def new_server():
     if request.method == "GET":
-        return render_template("new_server.html")
+        return render_template("new_server.html", nav=_nav(active="new", legacy_url="/legacy"))
 
     name = request.form.get("name", "").strip()
     host = request.form.get("host", "").strip()
@@ -87,20 +117,26 @@ def new_server():
             "new_server.html",
             error="Name, host, username, and log path are required.",
             form=request.form,
+            nav=_nav(active="new", legacy_url="/legacy"),
         ), 400
     if auth_method == "password" and not password:
         return render_template(
-            "new_server.html", error="Password is required for password auth.", form=request.form
+            "new_server.html", error="Password is required for password auth.", form=request.form,
+            nav=_nav(active="new", legacy_url="/legacy"),
         ), 400
     if auth_method == "key" and not key_path:
         return render_template(
-            "new_server.html", error="Key path is required for key auth.", form=request.form
+            "new_server.html", error="Key path is required for key auth.", form=request.form,
+            nav=_nav(active="new", legacy_url="/legacy"),
         ), 400
 
     try:
         port_int = int(port or 22)
     except ValueError:
-        return render_template("new_server.html", error="Port must be a number.", form=request.form), 400
+        return render_template(
+            "new_server.html", error="Port must be a number.", form=request.form,
+            nav=_nav(active="new", legacy_url="/legacy"),
+        ), 400
 
     candidate = Server(
         id="pending", name=name, host=host, port=port_int, username=username,
@@ -112,6 +148,7 @@ def new_server():
             "new_server.html",
             error=f"Couldn't connect / find log file: {message}",
             form=request.form,
+            nav=_nav(active="new", legacy_url="/legacy"),
         ), 400
 
     server = store.add(
@@ -127,7 +164,13 @@ def analytics_page(server_id):
     server = store.get(server_id)
     if server is None:
         return "Server not found.", 404
-    return render_template("analytics.html", server=server)
+    nav = _live_nav(
+        server,
+        active="live",
+        include_status=True,
+        extra=f'<span><a href="/legacy/{server.id}">Legacy files →</a></span>',
+    )
+    return render_template("analytics.html", server=server, nav=nav)
 
 
 @app.route("/server_added/<server_id>")
@@ -138,7 +181,29 @@ def server_added_page(server_id):
     server = store.get(server_id)
     if server is None:
         return "Server not found.", 404
-    return render_template("server_added.html", server=server)
+    nav = _nav(
+        active="server_added",
+        legacy_url=f"/legacy/{server.id}",
+        subline=(
+            f"<span>Server <b>{_esc(server.name)}</b></span>"
+            f"<span>{_esc(server.username)}@{_esc(server.host)}:{server.port}</span>"
+            f"<span>live log <b>{_esc(server.log_path)}</b></span>"
+        ),
+    )
+    return render_template("server_added.html", server=server, nav=nav)
+
+
+@app.route("/legacy")
+def legacy_index():
+    """Global entry point for studying previous log files. Lists every
+    registered node so you can pick which one to dig into."""
+    servers = store.list()
+    nav = _nav(
+        active="legacy_index",
+        legacy_url="/legacy",
+        subline=f"<span>Pick a node whose previous log files you want to study.</span>",
+    )
+    return render_template("legacy_index.html", servers=servers, nav=nav)
 
 
 @app.route("/legacy/<server_id>")
@@ -157,11 +222,17 @@ def legacy_page(server_id):
     except Exception:  # noqa: BLE001 — show an empty picker on the page
         files = []
     current_name = os.path.basename(server.log_path)
+    nav = _live_nav(
+        server,
+        active="legacy",
+        extra=f'<span><a href="/analytics/{server.id}">Live monitor →</a></span>',
+    )
     return render_template(
         "legacy.html",
         server=server,
         log_dir=log_dir,
         files=[{"name": n, "size": sz, "is_live": n == current_name} for n, sz in files],
+        nav=nav,
     )
 
 

@@ -14,6 +14,11 @@ The **live monitor** and **legacy file study** are two separate views:
 - `/legacy/<id>` is where you browse and parse earlier, already-rotated
   logs (e.g. yesterday's file) once, in full, as a static snapshot.
 
+Every page shares a Slack-styled top navbar (**⬢ Hybris Log Monitor**)
+with **Servers**, **Add server**, and **Legacy files** links — the
+`/legacy` entry point lists every node so you can pick which one to dig
+into.
+
 ## Setup
 
 ```bash
@@ -54,9 +59,11 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
    - For date-rotated files (`console-20260810.log`), the monitor
      **auto-advances to the next day's file** (`console-20260811.log`)
      once the day is over.
-4. **`/legacy/<id>`** — separate legacy-file study page: browse the
-   node's log directory, pick an earlier file, and parse it in full as a
-   static snapshot with the same left/right + AI analysis UI. No polling.
+4. **`/legacy` + `/legacy/<id>`** — separate legacy-file study page: the
+   `/legacy` index lists every registered node, and `/legacy/<id>` lets
+   you browse a node's log directory, pick an earlier file, and parse it
+   in full as a static snapshot with the same left/right + AI analysis
+   UI. No polling.
 
 ## Project layout
 
@@ -67,8 +74,8 @@ sftp_client.py     paramiko wrappers (short-lived connections per call)
 models.py         Server model + JSON-file persistence
 log_parser.py      Batch + incremental log parsing (see below)
 llm_suggest.py     Calls out to Claude for a root-cause/fix suggestion
-templates/         servers.html, new_server.html, server_added.html,
-                   analytics.html, legacy.html
+templates/         _nav.html (shared Slack navbar), servers.html, new_server.html,
+                   server_added.html, legacy_index.html, analytics.html, legacy.html
 ```
 
 ## How live tailing works

@@ -17,13 +17,6 @@
                  Arial, "Noto Sans", sans-serif;
     font-size: 14px; line-height: 1.5;
   }
-  header {
-    display: flex; justify-content: space-between; align-items: center;
-    background: var(--aubergine); color: #fff; padding: 16px 32px;
-  }
-  header h1 { margin: 0; font-size: 17px; font-weight: 700; }
-  a.back { color: rgba(255,255,255,.82); text-decoration: none; font-size: 13px; }
-  a.back:hover { color: #fff; }
   main { max-width: 720px; margin: 40px auto; padding: 0 24px; }
   .success { display: flex; align-items: center; gap: 10px; color: var(--green); font-weight: 700; font-size: 16px; margin-bottom: 8px; }
   .subtitle { color: var(--muted); margin-bottom: 28px; }
@@ -44,10 +37,7 @@
 </head>
 <body>
 
-<header>
-  <h1>⬢ {{ server.name }} added</h1>
-  <a class="back" href="/servers">&larr; All servers</a>
-</header>
+{% include "_nav.html" %}
 
 <main>
   <div class="success">✔ Server connected and monitoring started</div>

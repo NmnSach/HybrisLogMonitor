@@ -21,26 +21,16 @@
     display: flex; flex-direction: column; height: 100vh; overflow: hidden;
   }
 
-  header {
-    display: flex; flex-direction: column; gap: 6px;
-    background: var(--aubergine); color: #fff;
-    padding: 14px 22px; flex: 0 0 auto;
-  }
-  header .top-row { display: flex; justify-content: space-between; align-items: center; }
-  header h1 { margin: 0; font-size: 17px; font-weight: 700; }
-  a.back { color: rgba(255,255,255,.82); text-decoration: none; font-size: 13px; }
-  a.back:hover { color: #fff; }
-  .header-meta { color: rgba(255,255,255,.82); font-size: 12.5px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
-  .header-meta b { font-weight: 600; }
-
   /* File picker bar */
   .picker {
     flex: 0 0 auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
     padding: 12px 22px; background: var(--bg); border-bottom: 1px solid var(--border);
   }
   .picker select {
+    flex: 0 0 auto;
     background: #fff; border: 1px solid #c5c7ca; border-radius: 6px;
-    color: var(--text); font-family: inherit; font-size: 13px; padding: 7px 10px; min-width: 320px; max-width: 60vw;
+    color: var(--text); font-family: inherit; font-size: 13px; padding: 7px 10px;
+    min-width: 320px; max-width: 60vw;
   }
   select:focus, input:focus { outline: none; border-color: var(--aubergine-2); }
   .btn {
@@ -129,17 +119,7 @@
 </style>
 </head>
 <body>
-<header>
-  <div class="top-row">
-    <h1>⬢ Legacy Log Files: {{ server.name }}</h1>
-    <a class="back" href="/servers">&larr; All servers</a>
-  </div>
-  <div class="header-meta">
-    <span>{{ server.username }}@{{ server.host }}:{{ server.port }}</span>
-    <span>directory <b>{{ log_dir }}</b></span>
-    <span><a class="back" href="/analytics/{{ server.id }}">Go to live monitor →</a></span>
-  </div>
-</header>
+{% include "_nav.html" %}
 
 <div class="picker">
   <select id="history-file-select"><option value="">Select a log file…</option></select>

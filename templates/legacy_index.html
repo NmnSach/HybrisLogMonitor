@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legacy Log Files — Hybris Log Monitor</title>
+<style>
+  :root {
+    --aubergine: #4a154b; --aubergine-2: #611f69;
+    --green: #2bac76; --red: #e01e5a; --yellow: #ecb22e;
+    --bg: #ffffff; --sidebar-bg: #f6f6f6; --border: #e3e3e3;
+    --text: #1d1c1d; --muted: #616061;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+                 Arial, "Noto Sans", "Apple Color Emoji", sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 32px; }
+  .page-title-row { margin-bottom: 20px; }
+  .page-title-row h1 { margin: 0; font-size: 21px; font-weight: 800; color: var(--aubergine); }
+  .page-title-row p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .card {
+    display: block; background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; text-decoration: none; color: inherit; transition: border-color .1s ease, box-shadow .1s ease;
+  }
+  .card:hover { border-color: var(--aubergine); box-shadow: 0 2px 8px rgba(74,21,75,.08); }
+  .card .name { font-size: 15px; font-weight: 700; color: var(--aubergine); margin-bottom: 4px; }
+  .card .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+  .card .go { display: inline-block; font-size: 12px; font-weight: 700; color: #fff; background: var(--aubergine-2); padding: 5px 12px; border-radius: 6px; }
+  .btn {
+    display: inline-block; padding: 8px 18px; border-radius: 6px;
+    border: 1px solid var(--aubergine); color: var(--aubergine); background: transparent;
+    font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none;
+  }
+  .btn:hover { background: rgba(97,31,105,.06); }
+  .empty {
+    color: var(--muted); text-align: center; padding: 60px 0;
+    border: 1px dashed var(--border); border-radius: 10px; background: #fcfcfc;
+  }
+  .empty .big { font-size: 30px; display: block; margin-bottom: 10px; }
+  .empty p { margin: 4px 0 16px; }
+</style>
+</head>
+<body>
+
+{% include "_nav.html" %}
+
+<main>
+  <div class="page-title-row">
+    <h1>Legacy Log Files</h1>
+    <p>Pick a node to browse its previously-rotated / dated log files (parsed once, in full, as a static snapshot).</p>
+  </div>
+
+  {% if servers|length == 0 %}
+    <div class="empty">
+      <span class="big">🗂️</span>
+      <p>No servers registered yet — add one first.</p>
+      <a class="btn" href="/new">Add a server</a>
+    </div>
+  {% else %}
+    <div class="grid">
+      {% for s in servers %}
+      <a class="card" href="/legacy/{{ s.id }}">
+        <div class="name">⬢ {{ s.name }}</div>
+        <div class="sub">{{ s.username }}@{{ s.host }}:{{ s.port }}</div>
+        <div class="sub">{{ s.log_path }}</div>
+        <span class="go">Browse legacy files →</span>
+      </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+</main>
+
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!-- Shared Slack-style top navbar. Include at the top of each page's body.
+     Expects a `nav` dict with: active ("servers"|"new"|"server_added"|"live"|"legacy"|"legacy_index"),
+     legacy_url (absolute path or None -> /legacy), subline (HTML string or None). -->
+<style>
+  .nav {
+    background: var(--aubergine, #4a154b);
+    color: #fff;
+    padding: 0 22px;
+    flex: 0 0 auto;
+  }
+  .nav-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; min-height: 54px; flex-wrap: wrap;
+  }
+  .nav-brand a {
+    color: #fff; font-size: 16px; font-weight: 800; text-decoration: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .nav-brand .mark { font-size: 20px; }
+  .nav-links { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .nav-links a {
+    color: rgba(255,255,255,.82); text-decoration: none; font-size: 13.5px; font-weight: 600;
+    padding: 7px 14px; border-radius: 6px; transition: background .08s ease, color .08s ease;
+  }
+  .nav-links a:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .nav-links a.active { background: var(--aubergine-2, #611f69); color: #fff; }
+  .nav-subline {
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+    color: rgba(255,255,255,.82); font-size: 12.5px; padding-bottom: 10px;
+  }
+  .nav-subline b { font-weight: 600; color: #fff; }
+  .nav-subline a { color: #fff; text-decoration: none; font-weight: 600; }
+  .nav-subline a:hover { text-decoration: underline; }
+  .nav-subline .dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 5px; vertical-align: middle;
+  }
+  .nav-subline .dot.live { background: var(--green, #2bac76); }
+  .nav-subline .dot.starting { background: var(--yellow, #ecb22e); }
+  .nav-subline .dot.error { background: var(--red, #e01e5a); }
+  .nav-subline .dot.stopped, .nav-subline .dot.not-started { background: rgba(255,255,255,.5); }
+</style>
+<header class="nav">
+  <div class="nav-row">
+    <div class="nav-brand"><a href="/servers"><span class="mark">⬢</span> Hybris Log Monitor</a></div>
+    <nav class="nav-links">
+      <a href="/servers" class="{{ 'active' if nav.active == 'servers' else '' }}">Servers</a>
+      <a href="/new" class="{{ 'active' if nav.active == 'new' else '' }}">Add server</a>
+      <a href="{{ nav.legacy_url or '/legacy' }}" class="{{ 'active' if nav.active in ('legacy', 'legacy_index') else '' }}">Legacy files</a>
+    </nav>
+  </div>
+  {% if nav.subline %}
+  <div class="nav-subline">{{ nav.subline | safe }}</div>
+  {% endif %}
+</header>
