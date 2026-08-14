@@ -28,6 +28,25 @@
   }
 
   /* ---------- Workspace: two panes ---------- */
+  /* ---------- Date retarget bar ---------- */
+  .retarget-bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 8px 22px; background: #faf8fb; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .retarget-bar label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .retarget-bar input[type=date] {
+    background: #fff; border: 1px solid #c5c7ca; border-radius: 6px;
+    color: var(--text); font-family: inherit; font-size: 13px; padding: 6px 10px;
+  }
+  .retarget-bar input[type=date]:focus { outline: none; border-color: var(--aubergine-2); }
+  .retarget-bar .retarget-btn {
+    padding: 6px 14px; border-radius: 6px; border: 1px solid var(--aubergine);
+    color: var(--aubergine); background: transparent; font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  .retarget-bar .retarget-btn:hover { background: rgba(97,31,105,.06); }
+  .retarget-bar .retarget-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .retarget-msg { color: var(--muted); font-size: 12.5px; }
+
   .workspace { display: flex; flex: 1 1 auto; min-height: 0; }
   .sidebar {
     flex: 0 0 400px; min-width: 300px; max-width: 460px;
@@ -45,7 +64,6 @@
   input[type=text]:focus, select:focus { outline: none; border-color: var(--aubergine-2); }
   .error-list { flex: 1 1 auto; overflow-y: auto; padding: 8px; min-height: 0; }
   .empty-note { color: var(--muted); text-align: center; padding: 40px 16px; font-size: 13px; }
-</style>
 .error-item {
     background: #fff; border: 1px solid var(--border); border-radius: 8px;
     padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
@@ -128,6 +146,13 @@
 <body>
 
 {% include "_nav.html" %}
+
+<div class="retarget-bar">
+  <label for="live-date">Live log date</label>
+  <input type="date" id="live-date">
+  <button class="retarget-btn" id="jump-date" type="button">Jump to date</button>
+  <span class="retarget-msg" id="retarget-msg"></span>
+</div>
 
 <div class="workspace">
   <!-- LEFT: error list -->
@@ -301,6 +326,40 @@ async function analyze() {
   }
 }
 
+function ymdToDateInput(ymd) {
+  return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+}
+function extractDateFromPath(path) {
+  const m = String(path || "").match(/(\d{8})\.log/);
+  return m ? ymdToDateInput(m[1]) : "";
+}
+function initDateBar() {
+  const cur = document.getElementById("current-file");
+  const v = extractDateFromPath(cur ? cur.textContent : "");
+  if (v) document.getElementById("live-date").value = v;
+}
+async function jumpToDate() {
+  const inp = document.getElementById("live-date");
+  const msg = document.getElementById("retarget-msg");
+  const btn = document.getElementById("jump-date");
+  const ymd = (inp.value || "").replace(/-/g, "");
+  if (!/^\d{8}$/.test(ymd)) { msg.textContent = "Pick a valid date first."; return; }
+  btn.disabled = true;
+  msg.textContent = "Switching live file…";
+  try {
+    const resp = await fetch(`/api/servers/${SERVER_ID}/date?date=${ymd}`, { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.error || "Failed to switch date."; btn.disabled = false; return; }
+    msg.textContent = `Now tailing ${data.path}`;
+    selectedGid = null; renderedGid = null; rowsById = new Map();
+    await refreshLiveErrors();
+    await refreshStatus();
+  } catch (e) {
+    msg.textContent = "Request failed.";
+  }
+  btn.disabled = false;
+}
+
 async function refreshStatus() {
   try {
     const resp = await fetch(`/api/servers/${SERVER_ID}/status`);
@@ -348,7 +407,9 @@ function debounce(fn, ms) {
 
 document.getElementById("search-input").addEventListener("input", debounce(refreshLiveErrors, 300));
 document.getElementById("severity-filter").addEventListener("change", refreshLiveErrors);
+document.getElementById("jump-date").addEventListener("click", jumpToDate);
 
+initDateBar();
 refreshStatus();
 refreshLiveErrors();
 setInterval(refreshStatus, REFRESH_MS);

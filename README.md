@@ -23,7 +23,7 @@ into.
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...      # optional, enables "Get AI suggestion"
+export GROQ_API_KEY=gsk_...            # enables the "Analyze with AI" feature (Groq)
 python app.py
 ```
 
@@ -33,7 +33,9 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Enables `suggest_fix()` calls | none — suggestion button will error without it |
+| `GROQ_API_KEY` | Enables AI analysis via the Groq API | none — the Analyze button will error without it |
+| `GROQ_MODEL` | Groq model used for analysis | `llama-3.3-70b-versatile` |
+| `GROQ_API_URL` | Groq (OpenAI-compatible) endpoint override | `https://api.groq.com/openai/v1/chat/completions` |
 | `SERVERS_STORE_PATH` | Where registered servers are persisted | `servers.json` in the working directory |
 | `SFTP_KEY_PASSPHRASE` | Passphrase for an encrypted private key, if using key auth with a protected key | none |
 
@@ -42,23 +44,26 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 1. **`/servers`** — lists every registered node with a live status dot
    (starting / live / error / stopped) and its distinct error-group
    count. "+ Add server" goes to `/new`.
-2. **`/new`** — enter host/port/username, either a password or an SSH
-   private key path, and the path to the *actively-written* log file
-   (e.g. `console-20260810.log` — whichever file your node is currently
-   appending to). The connection and file are checked before saving.
-   On success you land on a **"server added"** page that offers two
-   options: **Open live monitor** or **Check previous log files**.
+2. **`/new`** — enter host/port/username and either a password or an SSH
+   private key, plus a **date picker** for the log you want to tail. The
+   live log path is built from a fixed base (`/opt/hybris/log/tomcat/console-`)
+   plus the chosen date in `YYYYMMDD` — e.g. picking 2026-08-08 gives
+   `/opt/hybris/log/tomcat/console-20260808.log`. The connection and
+   file are checked before saving. On success you land on a
+   **"server added"** page that offers **Open live monitor** or
+   **Check previous log files**.
 3. **`/analytics/<id>`** — the live dashboard (Slack-styled two-pane UI):
    - Errors are listed on the **left** with their severity, frequency
      (count) and a relevance label (High / Medium / Low, combining
      severity + frequency + how recently the error fired).
    - Click an error to see its full details, stack-trace snippet and an
-     **"Analyze with AI"** button on the **right**; the AI analysis
-     renders *under* those details on the right pane.
-   - Auto-refreshes every 6 seconds.
-   - For date-rotated files (`console-20260810.log`), the monitor
-     **auto-advances to the next day's file** (`console-20260811.log`)
-     once the day is over.
+     **"Analyze with AI"** button on the **right**; the analysis (via
+     Groq) renders *under* those details on the right pane.
+   - A **date picker** in the toolbar lets you jump the live monitor to
+     any date's dated file.
+   - **Auto-advances** to the next day's file (e.g.
+     `console-20260812.log` → `console-20260813.log`) automatically once
+     the day is over, as long as the next file exists on the server.
 4. **`/legacy` + `/legacy/<id>`** — separate legacy-file study page: the
    `/legacy` index lists every registered node, and `/legacy/<id>` lets
    you browse a node's log directory, pick an earlier file, and parse it
@@ -69,11 +74,11 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 
 ```
 app.py            Flask routes + JSON API
-poller.py         Background per-server tailing threads
+poller.py         Background per-server tailing threads (incl. dated-file auto-advance)
 sftp_client.py     paramiko wrappers (short-lived connections per call)
 models.py         Server model + JSON-file persistence
 log_parser.py      Batch + incremental log parsing (see below)
-llm_suggest.py     Calls out to Claude for a root-cause/fix suggestion
+llm_suggest.py     Calls Groq for a root-cause/fix analysis
 templates/         _nav.html (shared Slack navbar), servers.html, new_server.html,
                    server_added.html, legacy_index.html, analytics.html, legacy.html
 ```
@@ -125,11 +130,12 @@ nothing is appending to.
   wherever `SERVERS_STORE_PATH` points). Fine for a local single-user
   tool; swap for a real secrets store before running this anywhere
   shared or network-reachable.
-- **`llm_suggest.py` is a stub.** `app.py`'s `_normalize_group()` shows
-  exactly what attributes it calls `suggest_fix(issue_description, group)`
-  with (`fingerprint`, `severity`, `exception_class`, `message`,
-  `top_frame`, `count`) — swap in your real implementation against that
-  shape, or adjust the adapter to match your real signature.
+- **AI analysis requires a Groq API key.** `llm_suggest.py` calls Groq's
+  OpenAI-compatible endpoint; set `GROQ_API_KEY` (and optionally
+  `GROQ_MODEL`) or the "Analyze with AI" button will show an error.
+  `app.py`'s `_normalize_group()` passes it a duck-typed group
+  (`fingerprint`, `severity`, `exception_class`, `message`, `top_frame`,
+  `count`, `sample_raw_text`).
 - **Poll interval / group cap** (`poller.POLL_INTERVAL_SECONDS = 15`,
   `MAX_GROUPS_PER_SERVER = 2000`) are reasonable defaults, not tuned to
   any particular log volume — adjust for your nodes' actual write rate.

@@ -46,11 +46,9 @@ MAX_GROUPS_PER_SERVER = 2000  # safety cap for pathologically noisy logs
 _DATED_FILE_RE = re.compile(r"^(?P<prefix>.*?)(?P<date>\d{8})(?P<suffix>\.log)$")
 
 
-def dated_file_path(server, when: datetime) -> Optional[str]:
-    """If `server.log_path` follows the console-YYYYMMDD.log convention,
-    return the path for the given date `when` (e.g. console-20260811.log
-    for Aug 11 2026). Returns None for any non-date-rotated file so the
-    poller never tries to switch files for e.g. a plain console.log."""
+def _dated_match(server) -> Optional[re.Match]:
+    """Return the _DATED_FILE_RE match for `server.log_path`, or None when
+    the log isn't date-rotated (or the date portion isn't a real date)."""
     base = os.path.basename(server.log_path)
     m = _DATED_FILE_RE.match(base)
     if not m:
@@ -59,10 +57,28 @@ def dated_file_path(server, when: datetime) -> Optional[str]:
         datetime.strptime(m.group("date"), "%Y%m%d")
     except ValueError:
         return None
-    prefix, suffix = m.group("prefix"), m.group("suffix")
-    return os.path.join(
-        os.path.dirname(server.log_path), f"{prefix}{when.strftime('%Y%m%d')}{suffix}"
-    )
+    return m
+
+
+def dated_file_base(server) -> Optional[str]:
+    """Return the fixed base path of a date-rotated log, i.e. everything
+    before the date — e.g. '/opt/hybris/log/tomcat/console-' for
+    console-20260812.log. Returns None for any non-date-rotated file
+    (plain console.log) so callers know the log never rolls forward."""
+    m = _dated_match(server)
+    if m is None:
+        return None
+    return os.path.join(os.path.dirname(server.log_path), m.group("prefix"))
+
+
+def dated_file_path(server, when: datetime) -> Optional[str]:
+    """The full path for a date-rotated log on the given date `when` —
+    base + YYYYMMDD + .log (e.g. console-20260811.log for Aug 11 2026).
+    Returns None for any non-date-rotated file."""
+    base_prefix = dated_file_base(server)
+    if base_prefix is None:
+        return None
+    return f"{base_prefix}{when.strftime('%Y%m%d')}.log"
 
 
 @dataclass
@@ -162,31 +178,50 @@ def _initial_parse(server, state: ServerPollState, path: Optional[str] = None) -
     state.offset = sftp_client.stat_size(server, path)
 
 
+def _retarget(server, state: ServerPollState, new_path: str) -> None:
+    """Point the live poller at `new_path` (a new day's dated file or a
+    user-chosen date). Flushes whatever entry was still open in the old
+    file, then re-seeds the new file from scratch."""
+    with state.lock:
+        if state.parser is not None:
+            pending = state.parser.flush()
+            if pending is not None:
+                state.total_entries_seen += 1
+                _record_entry(state, pending)
+        state.parser = None
+        state.offset = 0
+        state.current_path = new_path
+    _initial_parse(server, state, path=new_path)
+
+
+def retarget_date(server, state: ServerPollState, when: datetime) -> Optional[str]:
+    """Re-point the live poller at `base + YYYYMMDD + .log` for `when`.
+    Returns the new path, or None if this server's log isn't date-rotated.
+    Called by the app's date-picker endpoint so an operator can jump the
+    live monitor to a specific date."""
+    new_path = dated_file_path(server, when)
+    if new_path is None:
+        return None
+    _retarget(server, state, new_path)
+    return new_path
+
+
 def _maybe_switch_dated(server, state: ServerPollState) -> None:
     """For date-rotated logs (console-YYYYMMDD.log), once the day in the
     file we're tailing has ended, automatically jump to the *next* day's
     file and start studying it. This is what lets the live monitor roll
-    from console-20260810.log to console-20260811.log at midnight.
+    from console-20260812.log to console-20260813.log at midnight.
 
-    If the log isn't date-rotated, or the next day's file doesn't exist
+    If the log isn't date-rotated, or the target day's file doesn't exist
     remotely yet, this is a no-op and tailing continues on the current
-    file."""
+    file (it retries every poll cycle once the file appears)."""
     today_path = dated_file_path(server, datetime.utcnow())
     if today_path is None or today_path == state.current_path:
         return
     # Only switch once the target file actually exists on the server.
     if not sftp_client.file_exists(server, today_path):
         return
-    # Close out whatever entry was still open in the old day's file.
-    if state.parser is not None:
-        pending = state.parser.flush()
-        if pending is not None:
-            state.total_entries_seen += 1
-            _record_entry(state, pending)
-    # Reset and seed the new day's file.
-    state.parser = None
-    state.offset = 0
-    _initial_parse(server, state, path=today_path)
+    _retarget(server, state, today_path)
 
 
 STALL_POLLS_BEFORE_FLUSH = 2  # ~2 poll intervals of silence before we

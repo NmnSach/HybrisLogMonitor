@@ -19,7 +19,7 @@ no polling), with the same left/right + AI analysis UI.
 
 Run:
     pip install -r requirements.txt
-    export ANTHROPIC_API_KEY=sk-ant-...      # optional, enables fix suggestions
+    export GROQ_API_KEY=gsk_...               # enables AI analysis (Groq)
     python app.py
 Then open http://127.0.0.1:5000
 """
@@ -42,6 +42,17 @@ from models import Server, ServerStore
 app = Flask(__name__)
 
 store = ServerStore()
+
+# Fixed base for live date-rotated logs. A date is appended to build the
+# full path, e.g. LOG_BASE + "20260808" + ".log" =
+# /opt/hybris/log/tomcat/console-20260808.log
+LOG_BASE = "/opt/hybris/log/tomcat/console-"
+
+
+@app.context_processor
+def inject_globals():
+    """Make LOG_BASE (and friends) available to every template."""
+    return {"LOG_BASE": LOG_BASE}
 
 
 def _nav(active: str = "", legacy_url: str = "", subline=None) -> dict:
@@ -110,7 +121,20 @@ def new_server():
     auth_method = request.form.get("auth_method", "password")
     password = request.form.get("password", "")
     key_path = request.form.get("key_path", "").strip()
-    log_path = request.form.get("log_path", "").strip()
+
+    # The live log path is built from the fixed base + a date the user
+    # picks, e.g. /opt/hybris/log/tomcat/console- + 20260808 + .log. The
+    # form submits log_base + log_date (YYYY-MM-DD); we construct the full
+    # path server-side so it's correct even without JS.
+    log_base = request.form.get("log_base", "").strip() or LOG_BASE
+    log_date = request.form.get("log_date", "").strip()
+    if log_date:
+        try:
+            log_path = f"{log_base}{datetime.strptime(log_date, '%Y-%m-%d').strftime('%Y%m%d')}.log"
+        except ValueError:
+            log_path = ""
+    else:
+        log_path = request.form.get("log_path", "").strip()
 
     if not (name and host and username and log_path):
         return render_template(
@@ -272,6 +296,37 @@ def api_errors(server_id):
     return jsonify({"rows": [_group_row(g) for g in groups]})
 
 
+@app.route("/api/servers/<server_id>/date", methods=["POST"])
+def api_set_date(server_id):
+    """Re-point the live monitor at a specific date's dated log file
+    (LOG_BASE + YYYYMMDD + .log). Powers the date picker on the live page
+    and makes the automatic next-day roll-over easy to exercise."""
+    server = store.get(server_id)
+    if server is None:
+        return jsonify({"error": "Server not found."}), 404
+    state = poller.get_state(server_id)
+    if state is None:
+        return jsonify({"error": "Server is still starting up. Try again shortly."}), 503
+
+    date_str = request.args.get("date", "")
+    try:
+        when = datetime.strptime(date_str, "%Y%m%d")
+    except ValueError:
+        return jsonify({"error": "Invalid date — use YYYYMMDD."}), 400
+
+    try:
+        new_path = poller.retarget_date(server, state, when)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+    if new_path is None:
+        return jsonify({
+            "error": "This server's log path isn't date-rotated "
+                     "(<base>YYYYMMDD.log)."
+        }), 400
+    return jsonify({"ok": True, "date": date_str, "path": new_path})
+
+
 def _relevance(severity: str, count: int, last_seen=None) -> dict:
     """A simple 0-100 heuristic for how 'relevant' an error group is to an
     investigator, combining severity, raw frequency, and (for live data)
@@ -355,17 +410,16 @@ def _normalize_group(g):
     batch ErrorGroup shape (they differ slightly — e.g. top_frame is a
     direct field on one and nested under sample_entry on the other).
     Normalize both into one consistent, duck-typed shape before calling
-    it, so llm_suggest.py only has to handle one interface.
-
-    NOTE: I don't have the real llm_suggest.py, so this attribute set
-    (fingerprint/severity/exception_class/message/top_frame/count) is my
-    best guess at what suggest_fix() expects. Adjust here (or there) if
-    the real signature differs."""
+    it, so llm_suggest.py only has to handle one interface."""
     from types import SimpleNamespace
 
     top_frame = getattr(g, "top_frame", None)
     if top_frame is None and hasattr(g, "sample_entry"):
         top_frame = g.sample_entry.top_frame
+
+    raw_text = getattr(g, "sample_raw_text", None)
+    if not raw_text and hasattr(g, "sample_entry"):
+        raw_text = getattr(g.sample_entry, "raw_text", None)
 
     return SimpleNamespace(
         fingerprint=g.fingerprint,
@@ -374,6 +428,7 @@ def _normalize_group(g):
         message=g.message,
         top_frame=top_frame,
         count=g.count,
+        sample_raw_text=raw_text,
     )
 
 

@@ -23,11 +23,18 @@
   .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
   label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 0 6px; }
   label:first-of-type { margin-top: 0; }
-  input[type=text], input[type=password], input[type=number] {
+  input[type=text], input[type=password], input[type=number], input[type=date] {
     width: 100%; padding: 10px 12px; background: #fff; border: 1px solid #c5c7ca;
     border-radius: 6px; color: var(--text); font-family: inherit; font-size: 13.5px;
   }
   input:focus { outline: none; border-color: var(--aubergine-2); box-shadow: 0 0 0 1px var(--aubergine-2); }
+  .date-path-wrap { display: flex; gap: 8px; }
+  .date-path-wrap input[type=date] { flex: 1; }
+  .computed-path {
+    margin-top: 8px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
+    background: #f6f0f7; border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; color: var(--aubergine-2); word-break: break-all;
+  }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
   .radio-group { display: flex; gap: 16px; margin-top: 6px; }
@@ -91,12 +98,17 @@
         <input type="text" name="key_path" placeholder="/home/you/.ssh/id_rsa">
       </div>
 
-      <label>Log file path (the actively-written log to tail)</label>
-      <input type="text" name="log_path" placeholder="/opt/hybris/log/console-20260810.log"
-             value="{{ form.log_path if form else '' }}" required>
+      <label>Log file date (the live log to tail)</label>
+      <div class="date-path-wrap">
+        <input type="hidden" name="log_base" value="{{ LOG_BASE }}">
+        <input type="hidden" name="log_path" id="log_path">
+        <input type="date" name="log_date" id="log_date" value="{{ form.log_date if form else '' }}" required>
+      </div>
+      <div class="computed-path" id="computed-path"></div>
       <div class="hint">
-        Use a date-rotated file (<code>console-YYYYMMDD.log</code>) and the live monitor will
-        automatically jump to the next day's file when the day ends.
+        The live monitor tails <code>console-YYYYMMDD.log</code> and automatically
+        advances to the next day's file once the day ends. Path shown above is
+        what will be monitored (base <code>{{ LOG_BASE }}</code> + date).
       </div>
 
       <button class="btn" type="submit">Connect &amp; start monitoring</button>
@@ -110,10 +122,35 @@
 </main>
 
 <script>
+const LOG_BASE = "{{ LOG_BASE }}";
+
+function todayStr() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function updateLogPath() {
+  const dateInput = document.getElementById("log_date");
+  const pathEl = document.getElementById("computed-path");
+  const hidden = document.getElementById("log_path");
+  const val = dateInput.value || todayStr();
+  const ymd = val.replace(/-/g, "");
+  const path = LOG_BASE + ymd + ".log";
+  pathEl.textContent = path;
+  hidden.value = path;
+}
+
 function toggleAuth(mode) {
   document.getElementById("password-field").style.display = mode === "password" ? "block" : "none";
   document.getElementById("key-field").style.display = mode === "key" ? "block" : "none";
 }
+
+const dateInputEl = document.getElementById("log_date");
+if (!dateInputEl.value) dateInputEl.value = todayStr();
+dateInputEl.addEventListener("change", updateLogPath);
+updateLogPath();
 </script>
 
 </body>
