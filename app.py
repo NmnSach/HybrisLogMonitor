@@ -320,16 +320,28 @@ def api_set_date(server_id):
     except ValueError:
         return jsonify({"error": "Invalid date — use YYYYMMDD."}), 400
 
-    try:
-        new_path = poller.retarget_date(server, state, when)
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": str(exc)}), 502
-
+    new_path = poller.dated_file_path(server, when)
     if new_path is None:
         return jsonify({
             "error": "This server's log path isn't date-rotated "
                      "(<base>YYYYMMDD.log)."
         }), 400
+
+    # The dated file may not exist on the server yet (e.g. jumping to a
+    # date before the node has rotated to it). Check before attempting the
+    # SFTP parse so we return a clear message instead of an Errno 2 / 502.
+    if not sftp_client.file_exists(server, new_path):
+        return jsonify({
+            "error": f"No log file for {date_str} exists on the server yet "
+                     f"— checked {new_path}. Pick a different date (it "
+                     f"appears once the node rolls over to it)."
+        }), 404
+
+    try:
+        poller.retarget_date(server, state, when)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
     return jsonify({"ok": True, "date": date_str, "path": new_path})
 
 

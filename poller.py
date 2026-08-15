@@ -229,10 +229,15 @@ def retarget_date(server, state: ServerPollState, when: datetime) -> Optional[st
     """Re-point the live poller at `base + YYYYMMDD + .log` for `when`.
     Returns the new path, or None if this server's log isn't date-rotated.
     Called by the app's date-picker endpoint so an operator can jump the
-    live monitor to a specific date."""
+    live monitor to a specific date. Raises FileNotFoundError if the
+    target date's file doesn't exist on the server yet."""
     new_path = dated_file_path(server, when)
     if new_path is None:
         return None
+    if not sftp_client.file_exists(server, new_path):
+        raise FileNotFoundError(
+            f"No log file exists on the server for {when:%Y%m%d}: {new_path}"
+        )
     _retarget(server, state, new_path)
     return new_path
 
