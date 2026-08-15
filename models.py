@@ -36,6 +36,10 @@ class Server:
     key_path: str = ""  # used when auth_method == "key"
     created_at: str = ""
 
+    def __post_init__(self):
+        if self.log_path:
+            self.log_path = self.log_path.replace("\\", "/")
+
     def to_dict(self) -> dict:
         return asdict(self)
 

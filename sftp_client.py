@@ -128,6 +128,22 @@ def file_exists(server, remote_path: str) -> bool:
             return False
 
 
+def remote_dirname(path: str) -> str:
+    """POSIX dirname for a remote SFTP path. Never uses os.path.dirname —
+    on Windows that would leave/produce backslashes, but remote paths are
+    always forward-slash."""
+    normalized = (path or "").replace("\\", "/")
+    directory, _, _fname = normalized.rpartition("/")
+    return directory or "."
+
+
+def remote_basename(path: str) -> str:
+    """POSIX basename for a remote SFTP path (always forward-slash)."""
+    normalized = (path or "").replace("\\", "/")
+    _, _, name = normalized.rpartition("/")
+    return name or normalized
+
+
 def test_connection(server) -> Tuple[bool, str]:
     """Used by /new to validate credentials + log_path before saving the
     server record and starting a poller for it."""

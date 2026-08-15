@@ -245,13 +245,13 @@ def legacy_page(server_id):
     server = store.get(server_id)
     if server is None:
         return "Server not found.", 404
-    log_dir = os.path.dirname(server.log_path) or "."
+    log_dir = sftp_client.remote_dirname(server.log_path)
     files = []
     try:
         files = sftp_client.list_log_dir(server, log_dir)
     except Exception:  # noqa: BLE001 — show an empty picker on the page
         files = []
-    current_name = os.path.basename(server.log_path)
+    current_name = sftp_client.remote_basename(server.log_path)
     nav = _live_nav(
         server,
         active="legacy",
@@ -461,12 +461,12 @@ def api_files(server_id):
     server = store.get(server_id)
     if server is None:
         return jsonify({"error": "Server not found."}), 404
-    log_dir = os.path.dirname(server.log_path) or "."
+    log_dir = sftp_client.remote_dirname(server.log_path)
     try:
         files = sftp_client.list_log_dir(server, log_dir)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
-    current_name = os.path.basename(server.log_path)
+    current_name = sftp_client.remote_basename(server.log_path)
     return jsonify({
         "dir": log_dir,
         "files": [{"name": n, "size": sz, "is_live": n == current_name} for n, sz in files],
@@ -487,7 +487,7 @@ def api_history(server_id):
     if "/" in filename or filename in (".", ".."):
         return jsonify({"error": "Invalid filename."}), 400
 
-    log_dir = os.path.dirname(server.log_path) or "."
+    log_dir = sftp_client.remote_dirname(server.log_path)
     remote_path = f"{log_dir.rstrip('/')}/{filename}"
 
     try:

@@ -59,7 +59,7 @@ _DATED_FILE_RE = re.compile(r"^(?P<prefix>.*?)(?P<date>\d{8})(?P<suffix>\.log)$"
 def _dated_match(server) -> Optional[re.Match]:
     """Return the _DATED_FILE_RE match for `server.log_path`, or None when
     the log isn't date-rotated (or the date portion isn't a real date)."""
-    base = os.path.basename(server.log_path)
+    base = os.path.basename((server.log_path or "").replace("\\", "/"))
     m = _DATED_FILE_RE.match(base)
     if not m:
         return None
@@ -74,11 +74,20 @@ def dated_file_base(server) -> Optional[str]:
     """Return the fixed base path of a date-rotated log, i.e. everything
     before the date — e.g. '/opt/hybris/log/tomcat/console-' for
     console-20260812.log. Returns None for any non-date-rotated file
-    (plain console.log) so callers know the log never rolls forward."""
+    (plain console.log) so callers know the log never rolls forward.
+
+    Remote SFTP paths are always POSIX (forward slashes), regardless of the
+    OS the app runs on, so this is built with explicit '/' — never
+    os.path.join(), which would insert a backslash on Windows."""
     m = _dated_match(server)
     if m is None:
         return None
-    return os.path.join(os.path.dirname(server.log_path), m.group("prefix"))
+    remote = (server.log_path or "").replace("\\", "/")
+    directory, _, _filename = remote.rpartition("/")
+    prefix = m.group("prefix")
+    if directory:
+        return directory.rstrip("/") + "/" + prefix
+    return prefix
 
 
 def dated_file_path(server, when: datetime) -> Optional[str]:
@@ -103,7 +112,8 @@ def now_in_log_tz() -> datetime:
 
 def _file_date(path: str) -> Optional[datetime]:
     """The date embedded in a dated file path (console-20260812.log -> Aug 12)."""
-    m = _DATED_FILE_RE.match(os.path.basename(str(path or "")))
+    normalized = str(path or "").replace("\\", "/")
+    m = _DATED_FILE_RE.match(os.path.basename(normalized))
     if m is None:
         return None
     try:
