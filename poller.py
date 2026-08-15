@@ -33,12 +33,22 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 import log_parser
 import sftp_client
 
 POLL_INTERVAL_SECONDS = 15
 MAX_GROUPS_PER_SERVER = 2000  # safety cap for pathologically noisy logs
+
+# The day boundary of the dated log files is NOT the app machine's local
+# midnight (and not UTC) — Hybris nodes typically rotate their dated logs
+# at midnight in the node's timezone (e.g. CDT/CST). E.g. with logs on
+# America/Chicago time, console-20260814.log stays live until 10:30 AM IST
+# on Aug 15, then console-20260815.log appears. So "today" (which file is
+# currently live) must be computed in this timezone. Override with the
+# LOG_TIMEZONE env var if your nodes rotate on another zone.
+LOG_TIMEZONE = os.environ.get("LOG_TIMEZONE", "America/Chicago")
 
 # Matches date-rotated log files following the console-YYYYMMDD.log
 # convention (e.g. console-20260810.log). Used so the live monitor can
@@ -79,6 +89,27 @@ def dated_file_path(server, when: datetime) -> Optional[str]:
     if base_prefix is None:
         return None
     return f"{base_prefix}{when.strftime('%Y%m%d')}.log"
+
+
+def now_in_log_tz() -> datetime:
+    """Current wall-clock time (naive) in LOG_TIMEZONE — the zone the dated
+    log files are named after. This is what decides which day's file is
+    'today'. Falls back to UTC if the configured zone is invalid."""
+    try:
+        return datetime.now(ZoneInfo(LOG_TIMEZONE)).replace(tzinfo=None)
+    except Exception:  # noqa: BLE001 — bad zone name etc.
+        return datetime.utcnow()
+
+
+def _file_date(path: str) -> Optional[datetime]:
+    """The date embedded in a dated file path (console-20260812.log -> Aug 12)."""
+    m = _DATED_FILE_RE.match(os.path.basename(str(path or "")))
+    if m is None:
+        return None
+    try:
+        return datetime.strptime(m.group("date"), "%Y%m%d")
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -210,14 +241,25 @@ def _maybe_switch_dated(server, state: ServerPollState) -> None:
     """For date-rotated logs (console-YYYYMMDD.log), once the day in the
     file we're tailing has ended, automatically jump to the *next* day's
     file and start studying it. This is what lets the live monitor roll
-    from console-20260812.log to console-20260813.log at midnight.
+    from console-20260814.log to console-20260815.log.
 
-    If the log isn't date-rotated, or the target day's file doesn't exist
-    remotely yet, this is a no-op and tailing continues on the current
-    file (it retries every poll cycle once the file appears)."""
-    today_path = dated_file_path(server, datetime.utcnow())
+    'Day ended' is evaluated in LOG_TIMEZONE (the node's zone — e.g. the
+    log rotates at midnight CDT/CST, which may be 10:30 AM IST), NOT in
+    UTC or the app machine's local zone. The poller only advances forward
+    (never backwards to a file that's 'today' but older than the one being
+    manually tailed), and only once the target file exists remotely."""
+    today = now_in_log_tz()
+    today_path = dated_file_path(server, today)
     if today_path is None or today_path == state.current_path:
         return
+
+    # Only advance when the file we're tailing is from BEFORE today in the
+    # log's timezone. This prevents a manual "jump to a future date" from
+    # being immediately yanked back to today.
+    current_date = _file_date(state.current_path)
+    if current_date is not None and current_date.date() >= today.date():
+        return
+
     # Only switch once the target file actually exists on the server.
     if not sftp_client.file_exists(server, today_path):
         return

@@ -123,6 +123,7 @@
 
 <script>
 const LOG_BASE = "{{ LOG_BASE }}";
+const LOG_TODAY = "{{ LOG_TODAY }}";
 
 function todayStr() {
   const d = new Date();
@@ -148,7 +149,7 @@ function toggleAuth(mode) {
 }
 
 const dateInputEl = document.getElementById("log_date");
-if (!dateInputEl.value) dateInputEl.value = todayStr();
+if (!dateInputEl.value) dateInputEl.value = LOG_TODAY || todayStr();
 dateInputEl.addEventListener("change", updateLogPath);
 updateLogPath();
 </script>

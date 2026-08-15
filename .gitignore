@@ -1,0 +1,9 @@
+# Local secrets / runtime state
+.env
+servers.json
+servers.json.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/

@@ -52,7 +52,13 @@ LOG_BASE = "/opt/hybris/log/tomcat/console-"
 @app.context_processor
 def inject_globals():
     """Make LOG_BASE (and friends) available to every template."""
-    return {"LOG_BASE": LOG_BASE}
+    return {
+        "LOG_BASE": LOG_BASE,
+        # Today's date in the LOG'S timezone (e.g. America/Chicago), not the
+        # app machine's zone — used as the default for date pickers so the
+        # user picks the file the node is actually appending right now.
+        "LOG_TODAY": poller.now_in_log_tz().strftime("%Y-%m-%d"),
+    }
 
 
 def _nav(active: str = "", legacy_url: str = "", subline=None) -> dict:

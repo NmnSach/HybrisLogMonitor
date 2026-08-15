@@ -36,6 +36,7 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 | `GROQ_API_KEY` | Enables AI analysis via the Groq API | none — the Analyze button will error without it |
 | `GROQ_MODEL` | Groq model used for analysis | `llama-3.3-70b-versatile` |
 | `GROQ_API_URL` | Groq (OpenAI-compatible) endpoint override | `https://api.groq.com/openai/v1/chat/completions` |
+| `LOG_TIMEZONE` | Timezone the dated log files rotate in (the auto-advance day boundary) | `America/Chicago` (CDT/CST) |
 | `SERVERS_STORE_PATH` | Where registered servers are persisted | `servers.json` in the working directory |
 | `SFTP_KEY_PASSPHRASE` | Passphrase for an encrypted private key, if using key auth with a protected key | none |
 
@@ -103,8 +104,16 @@ long monitoring session.
 `console-YYYYMMDD.log` naming convention, the live monitor checks each
 poll cycle whether the current day is over and the next day's dated file
 has appeared on the server; when both are true it automatically closes
-out the old file and starts tailing the new one (e.g. `console-20260810.log`
-→ `console-20260811.log` at midnight). Non-dated files (plain `console.log`)
+out the old file and starts tailing the new one (e.g. `console-20260814.log`
+→ `console-20260815.log`).
+
+The day boundary is evaluated in the **log's own timezone**
+(`LOG_TIMEZONE`, default `America/Chicago` — CDT/CST). Hybris nodes
+rotate at *their* midnight, so with Central-time logs `console-20260814.log`
+stays live until 10:30 AM IST on Aug 15, then `console-20260815.log`
+appears and the monitor rolls over. The advance is strictly forward
+(it never yanks a manually-selected file back) and only happens once the
+next file actually exists remotely. Non-dated files (plain `console.log`)
 keep the existing behaviour unchanged.
 
 **A structural nuance worth knowing:** the parser deliberately does not

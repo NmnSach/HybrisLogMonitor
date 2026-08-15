@@ -15,6 +15,7 @@ message in the UI.
 
 import json
 import os
+import ssl
 import urllib.error
 import urllib.request
 
@@ -24,6 +25,19 @@ GROQ_API_URL = os.environ.get(
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 CALL_COUNT = {"n": 0}
+
+
+def _ssl_context():
+    """HTTPS context for the Groq call. macOS Python builds often can't
+    find the system CA bundle ('SSL: CERTIFICATE_VERIFY_FAILED ... unable
+    to get local issuer certificate'); pin certifi's bundle when it's
+    available so requests verify correctly."""
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 — fall back to the default behaviour
+        return ssl.create_default_context()
 
 
 def _group_description(group) -> str:
@@ -76,7 +90,12 @@ def _build_prompt(issue_description: str, group) -> str:
 
 
 def suggest_fix(issue_description, group):
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    # A pasted Groq key occasionally ends up as "gsk A5..." with a space
+    # where the underscore should be (valid keys are always gsk_...).
+    # Normalize that one-character copy/paste typo so auth still works.
+    if api_key.startswith("gsk ") and not api_key.startswith("gsk_"):
+        api_key = "gsk_" + api_key[4:]
     if not api_key:
         raise RuntimeError(
             "GROQ_API_KEY is not set. Export it (e.g. `export GROQ_API_KEY=...`) "
@@ -107,12 +126,15 @@ def suggest_fix(issue_description, group):
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            # Cloudflare (in front of Groq) blocks requests whose
+            # User-Agent looks like a bare urllib client ("1010").
+            "User-Agent": "hybris-log-monitor/1.0 (log analysis)",
         },
         method="POST",
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=90, context=_ssl_context()) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
