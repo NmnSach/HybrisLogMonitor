@@ -32,10 +32,14 @@ import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 from zoneinfo import ZoneInfo
 
+if TYPE_CHECKING:
+    from models import Server
+
 import log_parser
+import notifier
 import sftp_client
 
 POLL_INTERVAL_SECONDS = 15
@@ -156,6 +160,8 @@ class ServerPollState:
     last_polled_at: Optional[datetime] = None
     total_entries_seen: int = 0
     stall_polls: int = 0  # consecutive polls with no new bytes written
+    server: Optional["Server"] = None  # for email notifications
+    is_live: bool = False  # True once the initial backlog parse has finished
 
 
 _STATES: Dict[str, ServerPollState] = {}
@@ -198,6 +204,13 @@ def _record_entry(state: ServerPollState, entry) -> None:
                     existing.first_seen = entry.timestamp
                 if existing.last_seen is None or entry.timestamp > existing.last_seen:
                     existing.last_seen = entry.timestamp
+
+    # Email alert (fire-and-forget). Only once the monitor is "live" so the
+    # initial backlog parse doesn't spam the inbox on startup/restart.
+    if state.is_live and state.server is not None:
+        group = state.groups.get(gid)
+        if group is not None:
+            notifier.notify(state.server, group)
 
 
 def _initial_parse(server, state: ServerPollState, path: Optional[str] = None) -> None:
@@ -362,6 +375,8 @@ def _poll_loop(server, state: ServerPollState) -> None:
         state.status = "error"
         state.last_error = f"Initial parse failed: {exc}"
 
+    state.is_live = True  # from here on, newly-recorded entries may alert
+
     while not state.stop_event.is_set():
         if state.stop_event.wait(POLL_INTERVAL_SECONDS):
             break
@@ -383,7 +398,7 @@ def start_poller(server) -> ServerPollState:
         existing = _STATES.get(server.id)
         if existing is not None and existing.thread and existing.thread.is_alive():
             return existing
-        state = ServerPollState(server_id=server.id, current_path=server.log_path)
+        state = ServerPollState(server_id=server.id, current_path=server.log_path, server=server)
         _STATES[server.id] = state
 
     thread = threading.Thread(target=_poll_loop, args=(server, state), daemon=True)
