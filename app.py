@@ -33,6 +33,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 load_dotenv()
 
 import log_parser
+import notifier
 import poller
 import sftp_client
 from llm_suggest import suggest_fix
@@ -58,6 +59,7 @@ def inject_globals():
         # app machine's zone — used as the default for date pickers so the
         # user picks the file the node is actually appending right now.
         "LOG_TODAY": poller.now_in_log_tz().strftime("%Y-%m-%d"),
+        "NOTIFY_STATUS": notifier.notifier.get_status(),
     }
 
 
@@ -291,6 +293,21 @@ def api_status(server_id):
         "group_count": len(state.groups),
         "current_path": state.current_path or (server.log_path if server else ""),
     })
+
+
+@app.route("/api/notify/status")
+def api_notify_status():
+    """Returns the current Brevo SMTP email alert configuration and status."""
+    return jsonify(notifier.notifier.get_status())
+
+
+@app.route("/api/notify/test", methods=["GET", "POST"])
+def api_notify_test():
+    """Trigger a verification test email via Brevo SMTP to verify the pipeline."""
+    to_email = request.args.get("to") or request.form.get("to") or None
+    ok, msg = notifier.send_test_email(to_email=to_email)
+    status_code = 200 if ok else 500
+    return jsonify({"ok": ok, "message": msg}), status_code
 
 
 @app.route("/api/servers/<server_id>/errors")

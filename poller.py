@@ -217,6 +217,7 @@ def _initial_parse(server, state: ServerPollState, path: Optional[str] = None) -
     """Parse whatever's already in the file when we start watching it. The
     remote path defaults to the file the state currently tracks, so this
     can also seed a freshly rotated-to dated file."""
+    state.is_live = False
     path = path or state.current_path or server.log_path
     state.current_path = path
     parser = None
@@ -245,7 +246,9 @@ def _retarget(server, state: ServerPollState, new_path: str) -> None:
         state.parser = None
         state.offset = 0
         state.current_path = new_path
+        state.is_live = False
     _initial_parse(server, state, path=new_path)
+    state.is_live = True
 
 
 def retarget_date(server, state: ServerPollState, when: datetime) -> Optional[str]:

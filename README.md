@@ -39,6 +39,24 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 | `LOG_TIMEZONE` | Timezone the dated log files rotate in (the auto-advance day boundary) | `America/Chicago` (CDT/CST) |
 | `SERVERS_STORE_PATH` | Where registered servers are persisted | `servers.json` in the working directory |
 | `SFTP_KEY_PASSPHRASE` | Passphrase for an encrypted private key, if using key auth with a protected key | none |
+| `NOTIFY_ENABLED` | Master toggle for live error email alerts (`1` or `0`) | `0` |
+| `SMTP_HOST` | Brevo SMTP host | `smtp-relay.brevo.com` |
+| `SMTP_PORT` | Brevo SMTP port (`587` with STARTTLS or `465` with SSL) | `587` |
+| `SMTP_TLS` | Enable STARTTLS on port 587 (`1` or `0`) | `1` |
+| `SMTP_SSL` | Enable implicit SSL on port 465 (`1` or `0`) | `0` |
+| `SMTP_USER` | Brevo SMTP login or API key username | none |
+| `SMTP_PASSWORD` | Brevo SMTP password / key (`xsmtpsib-...`) | none |
+| `MAIL_FROM` | Verified Brevo sender email address | none |
+| `MAIL_TO` | Comma-separated recipient email address(es) | none |
+| `NOTIFY_INTERVAL_HOURS` | Cooldown interval before resending recurring errors with updated counts | `3` (hours) |
+
+### Email Notifications (Brevo SMTP)
+
+Live error alerting delivers alerts via Brevo SMTP (`smtp-relay.brevo.com`):
+- **First occurrence**: Sends an alert email immediately (formatted in both plain text and rich HTML).
+- **Anti-spam suppression**: Repeated occurrences within `NOTIFY_INTERVAL_HOURS` (default 3 hours) are silenced.
+- **Cooldown resend**: If the error keeps occurring after 2–3 hours, a recurring alert email is sent with the updated occurrence count and latest last-seen timestamp.
+- **Test Email**: Verify your email pipeline from the `/servers` dashboard with the **Send Test Email** button or `POST /api/notify/test`.
 
 ## Using it
 

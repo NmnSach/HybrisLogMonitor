@@ -62,8 +62,20 @@
     color: var(--muted); text-align: center; padding: 60px 0;
     border: 1px dashed var(--border); border-radius: 10px; background: #fcfcfc;
   }
-  .empty .big { font-size: 30px; display: block; margin-bottom: 10px; }
-  .empty p { margin: 4px 0 16px; }
+  .alert-banner {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    background: #f8f6f9; border: 1px solid #ebdbe9; border-radius: 8px;
+    padding: 12px 18px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .alert-banner-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .alert-tag {
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12.5px;
+    color: var(--aubergine);
+  }
+  .alert-detail { font-size: 12px; color: var(--muted); }
+  .alert-status-msg { font-size: 12px; font-weight: 600; margin-left: 8px; }
+  .alert-status-msg.ok { color: var(--green); }
+  .alert-status-msg.err { color: var(--red); }
 </style>
 </head>
 <body>
@@ -71,6 +83,27 @@
 {% include "_nav.html" %}
 
 <main>
+  {% if NOTIFY_STATUS.enabled %}
+  <div class="alert-banner">
+    <div class="alert-banner-left">
+      <span class="alert-tag"><span class="dot live"></span> Brevo Email Alerts: Active</span>
+      <span class="alert-detail">&bull; Recipients: <b>{{ NOTIFY_STATUS.mail_to|join(', ') }}</b></span>
+      <span class="alert-detail">&bull; Cooldown: <b>{{ NOTIFY_STATUS.interval_hours }}h</b></span>
+      <span id="test-email-msg" class="alert-status-msg"></span>
+    </div>
+    <div>
+      <button id="test-email-btn" class="btn small" onclick="sendTestEmail()">Send Test Email</button>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert-banner">
+    <div class="alert-banner-left">
+      <span class="alert-tag"><span class="dot stopped"></span> Brevo Email Alerts: Inactive</span>
+      <span class="alert-detail">Set <code>NOTIFY_ENABLED=1</code> and <code>MAIL_TO</code> in <code>.env</code> to receive live error notifications.</span>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="page-title-row">
     <h1>Monitored Servers</h1>
     <a class="btn primary" href="/new">+ Add server</a>
@@ -125,6 +158,37 @@
     </div>
   {% endif %}
 </main>
+
+<script>
+async function sendTestEmail() {
+  const btn = document.getElementById('test-email-btn');
+  const msg = document.getElementById('test-email-msg');
+  if (!btn || !msg) return;
+  
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  msg.className = 'alert-status-msg';
+  msg.textContent = 'Connecting to Brevo SMTP...';
+
+  try {
+    const res = await fetch('/api/notify/test', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      msg.className = 'alert-status-msg ok';
+      msg.textContent = '✓ ' + (data.message || 'Test email sent!');
+    } else {
+      msg.className = 'alert-status-msg err';
+      msg.textContent = '✗ ' + (data.message || 'Send failed.');
+    }
+  } catch (err) {
+    msg.className = 'alert-status-msg err';
+    msg.textContent = '✗ Network error testing email: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Test Email';
+  }
+}
+</script>
 
 </body>
 </html>
