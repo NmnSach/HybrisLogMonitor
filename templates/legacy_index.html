@@ -74,6 +74,32 @@
   }
   .result-bar .result-name { font-weight: 700; color: var(--aubergine); }
   .result-bar .result-banner { color: var(--muted); font-size: 12.5px; }
+  .result-filters {
+    display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end;
+    padding: 10px 18px; border-bottom: 1px solid var(--border); background: #faf8fb;
+  }
+  .result-filters .fgroup { display: flex; flex-direction: column; gap: 3px; }
+  .result-filters label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted);
+  }
+  .result-filters select, .result-filters input[type=datetime-local] {
+    background: #fff; border: 1px solid #c5c7ca; border-radius: 6px;
+    color: var(--text); font-family: inherit; font-size: 12.5px; padding: 5px 8px;
+  }
+  .result-filters select:focus, .result-filters input[type=datetime-local]:focus {
+    outline: none; border-color: var(--aubergine-2);
+  }
+  .result-filters .fbtn {
+    padding: 5px 14px; border-radius: 6px; border: 1px solid var(--aubergine);
+    color: var(--aubergine); background: transparent; font-family: inherit;
+    font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  .result-filters .fbtn:hover { background: rgba(97,31,105,.06); }
+  .result-filters .fbtn.primary { background: var(--aubergine); color: #fff; }
+  .result-filters .fbtn.primary:hover { background: var(--aubergine-2); }
+  .result-filters .fbtn:disabled { opacity: .5; cursor: not-allowed; }
+  .result-filters .fhint { color: var(--muted); font-size: 11.5px; align-self: center; }
   .result-work { display: flex; min-height: 380px; max-height: 72vh; }
   .result-sidebar { flex: 0 0 400px; min-width: 300px; max-width: 480px; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
   .result-sidebar-title { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; }
@@ -162,6 +188,27 @@
     <div class="result-bar">
       <span class="result-name" id="result-name"></span>
       <span class="result-banner" id="result-banner"></span>
+    </div>
+    <div class="result-filters" id="upload-filters">
+      <div class="fgroup">
+        <label for="f-severity">Severity</label>
+        <select id="f-severity">
+          <option value="all">All</option>
+          <option value="error">Errors only</option>
+          <option value="warning">Warnings only</option>
+        </select>
+      </div>
+      <div class="fgroup">
+        <label for="f-start">From</label>
+        <input type="datetime-local" id="f-start">
+      </div>
+      <div class="fgroup">
+        <label for="f-end">To</label>
+        <input type="datetime-local" id="f-end">
+      </div>
+      <button class="fbtn primary" id="filter-apply" type="button">Apply</button>
+      <button class="fbtn" id="filter-reset" type="button">Reset</button>
+      <span class="fhint">Times are the log's own timestamps.</span>
     </div>
     <div class="result-work">
       <aside class="result-sidebar">
@@ -269,17 +316,9 @@ async function uploadFile(file) {
     if (!resp.ok) throw new Error(data.error || "upload failed");
 
     UPLOAD_TOKEN = data.token;
-    selectedGid = null;
-    uploadRows = new Map();
-    document.getElementById("result-name").textContent = data.file;
-    document.getElementById("result-banner").textContent =
-      `${data.total_entries} entries, ${data.error_count} errors, ${data.warning_count} warnings, ${data.rows.length} distinct groups.`;
-    document.getElementById("upload-results").classList.add("show");
-    renderUploadList(data.rows);
-    document.getElementById("upload-detail-empty").style.display = "block";
-    document.getElementById("upload-detail-content").style.display = "none";
+    resetFilterControls();
+    renderUploadData(data);
     setNote("");
-    document.getElementById("upload-results").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     document.getElementById("upload-results").classList.remove("show");
     setNote(`⚠️ ${escapeHtml(String(e))}`);
@@ -287,6 +326,55 @@ async function uploadFile(file) {
     dropzone.classList.remove("uploading");
     fileInput.value = "";
   }
+}
+
+function resetFilterControls() {
+  document.getElementById("f-severity").value = "all";
+  document.getElementById("f-start").value = "";
+  document.getElementById("f-end").value = "";
+}
+
+function renderUploadData(data) {
+  selectedGid = null;
+  uploadRows = new Map();
+  document.getElementById("result-name").textContent = data.file;
+  document.getElementById("result-banner").textContent =
+    `${data.total_entries} entries, ${data.error_count} errors, ${data.warning_count} warnings, ${data.rows.length} distinct groups.`
+    + (data.filtered ? " (filtered)" : "");
+  document.getElementById("upload-results").classList.add("show");
+  renderUploadList(data.rows);
+  document.getElementById("upload-detail-empty").style.display = "block";
+  document.getElementById("upload-detail-content").style.display = "none";
+  document.getElementById("upload-results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function applyFilters() {
+  if (!UPLOAD_TOKEN) return;
+  const applyBtn = document.getElementById("filter-apply");
+  applyBtn.disabled = true;
+  const params = new URLSearchParams({
+    token: UPLOAD_TOKEN,
+    severity: document.getElementById("f-severity").value,
+  });
+  const start = document.getElementById("f-start").value;
+  const end = document.getElementById("f-end").value;
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+  try {
+    const resp = await fetch("/api/upload/filter?" + params.toString());
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "filter failed");
+    renderUploadData(data);
+  } catch (e) {
+    document.getElementById("result-banner").textContent = `Filter error: ${e.message}`;
+  } finally {
+    applyBtn.disabled = false;
+  }
+}
+
+function resetFilters() {
+  resetFilterControls();
+  applyFilters();
 }
 /* ---- Results rendering (mirrors the server legacy view) ---- */
 function renderUploadList(rows) {
@@ -396,6 +484,11 @@ async function analyzeUpload() {
     btn.disabled = false;
   }
 }
+
+/* ---- Filter wiring ---- */
+document.getElementById("f-severity").addEventListener("change", applyFilters);
+document.getElementById("filter-apply").addEventListener("click", applyFilters);
+document.getElementById("filter-reset").addEventListener("click", resetFilters);
 </script>
 
 </body>

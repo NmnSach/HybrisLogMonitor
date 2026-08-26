@@ -555,9 +555,9 @@ def api_history(server_id):
     })
 
 
-def _history_rows(result):
-    """Render an AnalysisResult into the JSON row shape shared by the
-    uploaded-file view and the server historical-file view."""
+def _rows_from_groups(groups):
+    """Render a list of ErrorGroup objects into the JSON row shape shared by
+    the uploaded-file view and the server historical-file view."""
     return [
         {
             "gid": poller._gid_for(g.fingerprint),
@@ -571,8 +571,14 @@ def _history_rows(result):
             "sample_raw_text": g.sample_entry.raw_text,
             "relevance": _relevance(g.severity, g.count, g.last_seen),
         }
-        for g in result.groups
+        for g in groups
     ]
+
+
+def _history_rows(result):
+    """Render an AnalysisResult into the JSON row shape shared by the
+    uploaded-file view and the server historical-file view."""
+    return _rows_from_groups(result.groups)
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -644,6 +650,97 @@ def api_upload_suggest(token, gid):
 
     entry["suggestions"][gid] = suggestion
     return jsonify({"gid": gid, "cached": False, **_suggestion_payload(suggestion)})
+
+
+@app.route("/api/upload/filter")
+def api_upload_filter():
+    """Re-filter an already-uploaded (parsed) file by a time window and/or
+    severity, without re-uploading. The full file is parsed once on upload
+    and the parsed groups (each holding its occurrences) are cached in
+    UPLOADED_FILES; this endpoint slices that cache in memory.
+
+    Query params:
+      token       upload token returned by POST /api/upload (required)
+      severity    all | error | warning      (default: all)
+      start, end  naive datetime-local values 'YYYY-MM-DDTHH:MM' filtering
+                  on the log timestamp; omitted = unbounded.
+
+    Timestamps in a log file are parsed as naive wall-clock (the app never
+    assigns a zone), so the browser's naive datetime-local inputs compare
+    directly against them.
+    """
+    entry = UPLOADED_FILES.get(request.args.get("token", ""))
+    if entry is None:
+        return jsonify({"error": "Uploaded file no longer available — drop it again."}), 404
+
+    severity = request.args.get("severity", "all")
+    try:
+        start = _parse_window_dt(request.args.get("start", ""))
+        end = _parse_window_dt(request.args.get("end", ""))
+    except ValueError as exc:
+        return jsonify({"error": f"Invalid time window: {exc}"}), 400
+
+    groups = _filter_upload_groups(entry["groups"], start, end, severity)
+    error_count = sum(e.is_error for g in groups for e in g.occurrences)
+    warning_count = sum(e.is_warning for g in groups for e in g.occurrences)
+
+    return jsonify({
+        "token": request.args.get("token", ""),
+        "file": entry["name"],
+        # Within the requested window only the retained error/warning
+        # entries are known (info/debug were discarded at parse time), so
+        # the entry count here is the issue-entry count in the view.
+        "total_entries": error_count + warning_count,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "rows": _rows_from_groups(groups),
+        "filtered": True,
+    })
+
+
+def _parse_window_dt(value: str):
+    """Parse a 'YYYY-MM-DDTHH:MM' (datetime-local) value into a naive
+    datetime. Empty string -> None (no bound)."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    if parsed.year < 1900 or parsed.year > 2200:
+        raise ValueError(f"year out of range: {value}")
+    return parsed
+
+
+def _filter_upload_groups(groups, start_dt, end_dt, severity: str):
+    """Slice the cached {gid: ErrorGroup} map down to the groups that have
+    at least one occurrence inside [start_dt, end_dt] (whichever bounds are
+    given) and (for severity in error/warning) match that severity. Returns
+    fresh ErrorGroup objects rebuilt over the in-window occurrences, keeping
+    the original most-frequent-first ordering. Works on naive timestamps, the
+    same kind log_parser produces."""
+    if severity not in ("error", "warning"):
+        severity = "all"
+
+    out = []
+    for g in groups.values():
+        if severity != "all" and g.severity != severity:
+            continue
+        occs = [
+            e for e in g.occurrences
+            if (start_dt is None or (e.timestamp is not None and e.timestamp >= start_dt))
+            and (end_dt is None or (e.timestamp is not None and e.timestamp <= end_dt))
+        ]
+        if not occs:
+            continue
+        fresh = log_parser.ErrorGroup(
+            fingerprint=g.fingerprint,
+            severity=g.severity,
+            exception_class=g.exception_class,
+            message=g.message,
+            sample_entry=occs[0],
+        )
+        fresh.occurrences = occs
+        out.append(fresh)
+    return out
 
 
 def _file_lines(stream):

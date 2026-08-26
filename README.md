@@ -94,6 +94,10 @@ Live error alerting delivers alerts via Brevo SMTP (`smtp-relay.brevo.com`):
    and AI analysis as node-backed files. Posted via `POST /api/upload`;
    groups are cached in memory (bounded) and AI analysis reuses the same
    Groq pipeline via `GET /api/upload/suggest/<token>/<gid>`.
+   Once a file is parsed you can filter the results by **severity**
+   (all / errors / warnings) and/or a **time window** (From / To, using
+   the log's own naive timestamps) with `GET /api/upload/filter` — this
+   slices the already-parsed cache in memory, so there's no re-upload.
 
 ## Project layout
 
