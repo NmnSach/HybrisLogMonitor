@@ -27,17 +27,58 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 CALL_COUNT = {"n": 0}
 
 
-def _ssl_context():
-    """HTTPS context for the Groq call. macOS Python builds often can't
-    find the system CA bundle ('SSL: CERTIFICATE_VERIFY_FAILED ... unable
-    to get local issuer certificate'); pin certifi's bundle when it's
-    available so requests verify correctly."""
+def _candidate_cafiles():
+    """Yield CA bundle paths worth trying, best candidates first: certifi's
+    curated bundle (a complete, current PEM trust store that doesn't depend
+    on the OS), then an operator-set SSL_CERT_FILE for custom/internal CAs."""
     try:
         import certifi
 
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:  # noqa: BLE001 — fall back to the default behaviour
-        return ssl.create_default_context()
+        yield certifi.where()
+    except Exception:  # noqa: BLE001 — certifi optional
+        pass
+    custom = os.environ.get("SSL_CERT_FILE", "").strip()
+    if custom:
+        yield custom
+
+
+def _ssl_context():
+    """Build a best-effort HTTPS context for the GroQ call.
+
+    macOS python.org / unsigned Homebrew Python builds often can't find a
+    usable CA store and hit 'SSL: CERTIFICATE_VERIFY_FAILED ... unable to
+    get local issuer certificate'. To cover every machine the app runs on
+    we trust BOTH the OS store AND every candidate CA bundle (loading an
+    extra file appends to, rather than replaces, the existing store), so
+    either one is enough.
+
+    If the network sits behind an SSL-tapping (MITM) filter whose private
+    root CA is in none of those stores (corporate proxies such as Zscaler /
+    Bluecoat), verification can't succeed no matter what. As an explicit
+    escape hatch, set GROQ_SSL_NO_VERIFY=1 to skip certificate verification
+    for this one Groq call (see README). Only do that if you understand and
+    accept the risk.
+
+    Never raises: on any construction failure the caller simply gets a
+    context whose store is empty, and the request fails with the clear
+    guidance message in suggest_fix() instead of a 500.
+    """
+    if os.environ.get("GROQ_SSL_NO_VERIFY", "").strip().lower() in ("1", "true", "yes", "on"):
+        return ssl._create_unverified_context()
+
+    try:
+        # OS trust store first (also lets a sysadmin drop a private CA into
+        # the system keychain / SSL_CERT_FILE and have it honoured here).
+        ctx = ssl.create_default_context()
+    except Exception:  # noqa: BLE001 — broken OS store; start clean
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    for cafile in _candidate_cafiles():
+        try:
+            ctx.load_verify_locations(cafile=cafile)
+        except Exception:  # noqa: BLE001 — try the next candidate
+            continue
+    return ctx
 
 
 def _group_description(group) -> str:
@@ -140,7 +181,19 @@ def suggest_fix(issue_description, group):
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Groq API error {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Groq: {exc.reason}") from exc
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in str(reason).lower():
+            raise RuntimeError(
+                "SSL certificate verification failed when connecting to Groq — "
+                "the machine couldn't find/trust a CA bundle for api.groq.com. "
+                "Fix options: (1) run `pip install certifi` (already in "
+                "requirements.txt) so the app can use certifi's CA bundle; "
+                "(2) if a corporate HTTPS proxy is intercepting the connection "
+                "with its own private CA, install that root CA, or set "
+                "`GROQ_SSL_NO_VERIFY=1` to skip verification for Groq calls "
+                "(insecure — only as a last resort)."
+            ) from exc
+        raise RuntimeError(f"Could not reach Groq: {reason}") from exc
 
     try:
         content = body["choices"][0]["message"]["content"]

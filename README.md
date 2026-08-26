@@ -36,6 +36,7 @@ Then open **http://127.0.0.1:5000** — it redirects to `/servers`.
 | `GROQ_API_KEY` | Enables AI analysis via the Groq API | none — the Analyze button will error without it |
 | `GROQ_MODEL` | Groq model used for analysis | `llama-3.3-70b-versatile` |
 | `GROQ_API_URL` | Groq (OpenAI-compatible) endpoint override | `https://api.groq.com/openai/v1/chat/completions` |
+| `GROQ_SSL_NO_VERIFY` | Skip TLS certificate verification for Groq calls (`1` to enable) — **only** for networks whose HTTPS proxy intercepts traffic with a private CA | `0` |
 | `LOG_TIMEZONE` | Timezone the dated log files rotate in (the auto-advance day boundary) | `America/Chicago` (CDT/CST) |
 | `SERVERS_STORE_PATH` | Where registered servers are persisted | `servers.json` in the working directory |
 | `SFTP_KEY_PASSPHRASE` | Passphrase for an encrypted private key, if using key auth with a protected key | none |
@@ -173,6 +174,15 @@ nothing is appending to.
   `app.py`'s `_normalize_group()` passes it a duck-typed group
   (`fingerprint`, `severity`, `exception_class`, `message`, `top_frame`,
   `count`, `sample_raw_text`).
+- **`SSL: CERTIFICATE_VERIFY_FAILED … unable to get local issuer
+  certificate` on AI analysis.** The app trusts both the OS CA store and
+  `certifi`'s bundle, so on macOS this usually just means `certifi` isn't
+  installed in the interpreter running the app — run
+  `pip install certifi` (it's already in `requirements.txt`) and restart.
+  If a corporate HTTPS proxy (Zscaler, Bluecoat, …) intercepts Groq's
+  traffic with a private root CA, install that CA on the machine or, as a
+  last resort, set `GROQ_SSL_NO_VERIFY=1` to skip verification for Groq
+  calls (insecure — don't enable it on a network you don't control).
 - **Poll interval / group cap** (`poller.POLL_INTERVAL_SECONDS = 15`,
   `MAX_GROUPS_PER_SERVER = 2000`) are reasonable defaults, not tuned to
   any particular log volume — adjust for your nodes' actual write rate.
