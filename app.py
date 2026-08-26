@@ -25,6 +25,8 @@ Then open http://127.0.0.1:5000
 """
 
 import os
+import secrets
+import itertools
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -43,6 +45,15 @@ from models import Server, ServerStore
 app = Flask(__name__)
 
 store = ServerStore()
+
+# In-memory cache of drag-and-dropped (uploaded) log files, so the AI
+# suggestion endpoint can look up a specific error group after a parse —
+# just like it does for live / historical rows. Keyed by a short-lived
+# token the browser echoes back. Bounded: oldest entries are evicted once
+# we exceed MAX_UPLOADED_FILES (an upload is a static snapshot we never
+# need to keep beyond the session anyway).
+UPLOADED_FILES = {}
+MAX_UPLOADED_FILES = 25
 
 # Fixed base for live date-rotated logs. A date is appended to build the
 # full path, e.g. LOG_BASE + "20260808" + ".log" =
@@ -542,6 +553,120 @@ def api_history(server_id):
             for g in result.groups
         ],
     })
+
+
+def _history_rows(result):
+    """Render an AnalysisResult into the JSON row shape shared by the
+    uploaded-file view and the server historical-file view."""
+    return [
+        {
+            "gid": poller._gid_for(g.fingerprint),
+            "severity": g.severity,
+            "exception_class": g.exception_class,
+            "message": g.message,
+            "count": g.count,
+            "first_seen": g.first_seen.isoformat() if g.first_seen else None,
+            "last_seen": g.last_seen.isoformat() if g.last_seen else None,
+            "top_frame": g.sample_entry.top_frame,
+            "sample_raw_text": g.sample_entry.raw_text,
+            "relevance": _relevance(g.severity, g.count, g.last_seen),
+        }
+        for g in result.groups
+    ]
+
+
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """Accept a locally drag-and-dropped log file, parse it once in full
+    (a static snapshot, exactly like a historical file), and return the
+    results so /legacy can render them without any registered server.
+
+    The parsed groups are cached in UPLOADED_FILES under a token so the
+    dropped-file viewer can ask the AI to analyze a specific error group
+    later, without re-uploading or needing an SFTP server.
+    """
+    fs = request.files.get("file")
+    if fs is None or not fs.filename:
+        return jsonify({"error": "No file uploaded."}), 400
+
+    try:
+        first, rest = _first_line_or_none(_file_lines(fs.stream))
+        if first is None:
+            return jsonify({"error": "The uploaded file is empty."}), 400
+        result = log_parser.analyze(itertools.chain([first], rest))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+    token = secrets.token_hex(4)
+    groups = {poller._gid_for(g.fingerprint): g for g in result.groups}
+    UPLOADED_FILES[token] = {
+        "name": fs.filename,
+        "groups": groups,
+        "suggestions": {},
+    }
+    # Bound the cache — an upload is a static snapshot; keep the freshest.
+    if len(UPLOADED_FILES) > MAX_UPLOADED_FILES:
+        UPLOADED_FILES.pop(next(iter(UPLOADED_FILES)))
+
+    return jsonify({
+        "token": token,
+        "file": fs.filename,
+        "total_entries": result.total_entries,
+        "error_count": result.error_count,
+        "warning_count": result.warning_count,
+        "rows": _history_rows(result),
+    })
+
+
+@app.route("/api/upload/suggest/<token>/<gid>")
+def api_upload_suggest(token, gid):
+    """AI analysis for an error group from a drag-and-dropped file. Mirrors
+    the live/historical /api/servers/<id>/suggest/<gid> endpoint, but looks
+    a group up in the uploaded-file cache instead of a poller state."""
+    entry = UPLOADED_FILES.get(token)
+    if entry is None:
+        return jsonify({"error": "Uploaded file no longer available — drop it again."}), 404
+
+    refresh = request.args.get("refresh") == "1"
+    issue_description = request.args.get("issue_description", "")
+
+    if not refresh and gid in entry["suggestions"]:
+        return jsonify({"gid": gid, "cached": True, **_suggestion_payload(entry["suggestions"][gid])})
+
+    group = entry["groups"].get(gid)
+    if group is None:
+        return jsonify({"error": "Unknown error group in the uploaded file."}), 404
+
+    try:
+        suggestion = suggest_fix(issue_description, _normalize_group(group))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"Suggestion failed: {exc}"}), 502
+
+    entry["suggestions"][gid] = suggestion
+    return jsonify({"gid": gid, "cached": False, **_suggestion_payload(suggestion)})
+
+
+def _file_lines(stream):
+    """Adapt an uploaded binary/text stream into an iterable of text lines,
+    tolerant of both Werkzeug's binary SpooledTemporaryFile and any text
+    stream. Decodes bytes with replacement (like SFTP reads do)."""
+    for line in stream:
+        if isinstance(line, bytes):
+            yield line.decode("utf-8", errors="replace").rstrip("\r\n")
+        else:
+            yield line.rstrip("\r\n")
+
+
+def _first_line_or_none(lines):
+    """Peek the first line of a streamed-upload iterable so we can give an
+    empty file a clear error before running the (sniffing) parser. Returns
+    (None, None) when the file has no content, else (first_line, rest_iter)."""
+    it = iter(lines)
+    try:
+        first = next(it)
+    except StopIteration:
+        return None, None
+    return first, it
 
 
 def _line_iter_from_chunks(chunks):

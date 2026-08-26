@@ -88,6 +88,12 @@ Live error alerting delivers alerts via Brevo SMTP (`smtp-relay.brevo.com`):
    you browse a node's log directory, pick an earlier file, and parse it
    in full as a static snapshot with the same left/right + AI analysis
    UI. No polling.
+5. **Drag & drop on `/legacy`** — no server needed: drop a local log file
+   onto the `/legacy` page (or click to browse) and it is parsed once in
+   full as a static snapshot, with the same error/warning list, details,
+   and AI analysis as node-backed files. Posted via `POST /api/upload`;
+   groups are cached in memory (bounded) and AI analysis reuses the same
+   Groq pipeline via `GET /api/upload/suggest/<token>/<gid>`.
 
 ## Project layout
 
