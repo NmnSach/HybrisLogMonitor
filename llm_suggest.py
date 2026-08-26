@@ -174,12 +174,17 @@ def suggest_fix(issue_description, group):
         method="POST",
     )
 
+    raw = b""
+    status = None
     try:
         with urllib.request.urlopen(req, timeout=90, context=_ssl_context()) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
+            status = getattr(resp, "status", 200)
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Groq API error {exc.code}: {detail}") from exc
+        # Non-2xx (401 bad key, 429 rate limit, 5xx...). Read the body so
+        # we can surface the API's own error detail below.
+        status = exc.code
+        raw = exc.read()
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", exc)
         if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in str(reason).lower():
@@ -194,6 +199,21 @@ def suggest_fix(issue_description, group):
                 "(insecure — only as a last resort)."
             ) from exc
         raise RuntimeError(f"Could not reach Groq: {reason}") from exc
+
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        preview = raw[:400].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            "Groq returned an empty or non-JSON response (HTTP "
+            f"{status}). Body preview: {preview!r}. If that looks like an "
+            "HTML page (Cloudflare challenge / corporate proxy block page), "
+            "the request is being intercepted — check GROQ_API_URL, any "
+            "corporate proxy, and the SSL setup."
+        ) from exc
+
+    if status is not None and status >= 400:
+        raise RuntimeError(f"Groq API error {status}: {str(body)[:400]}")
 
     try:
         content = body["choices"][0]["message"]["content"]
